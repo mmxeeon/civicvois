@@ -37,64 +37,72 @@ if (!$segnalazione) {
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Modifica Segnalazione - Civicvois</title>
-    <link rel="stylesheet" href="../assets/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Inter', sans-serif;
             margin: 0;
             padding: 0;
             display: flex;
             flex-direction: column;
             min-height: 100vh;
-            background: #e6f7ff;
-            color: #000;
+            background: linear-gradient(135deg, #1e3a8a, #2563eb);
+            color: #ffffff;
         }
 
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 20px;
-            background: #007acc;
-            color: #fff;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
         }
 
         header h1 {
             margin: 0;
+            font-size: 1.8rem;
         }
 
         header nav a {
-            color: #fff;
+            color: #ffffff;
             text-decoration: none;
             font-weight: bold;
             margin-left: 15px;
-        }
-
-        header nav a.active {
-            text-decoration: underline;
+            background: #2563eb;
+            padding: 10px 15px;
+            border-radius: 8px;
+            transition: background 0.3s, transform 0.2s;
         }
 
         header nav a:hover {
-            text-decoration: underline;
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
 
         .container {
             flex: 1;
             padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
 
         .form-section {
-            background: #fff;
+            background: rgba(255, 255, 255, 0.1);
             padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            border-radius: 15px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
             max-width: 600px;
-            margin: 0 auto;
+            width: 100%;
         }
 
         .form-section h2 {
             margin-bottom: 20px;
+            text-align: center;
+            color: #dbeafe;
         }
 
         .form-section form {
@@ -105,16 +113,27 @@ if (!$segnalazione) {
 
         .form-section form label {
             font-weight: bold;
+            color: #dbeafe;
         }
 
         .form-section form input,
         .form-section form select,
         .form-section form textarea,
         .form-section form button {
-            padding: 10px;
+            padding: 12px;
             font-size: 1rem;
-            border: 1px solid #ccc;
-            border-radius: 5px;
+            border: 1px solid #93c5fd;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            color: #000000;
+            outline: none;
+            transition: border 0.3s;
+        }
+
+        .form-section form input:focus,
+        .form-section form select:focus,
+        .form-section form textarea:focus {
+            border-color: #2563eb;
         }
 
         .form-section form textarea {
@@ -122,40 +141,41 @@ if (!$segnalazione) {
         }
 
         .form-section form button {
-            background: #007acc;
-            color: #fff;
+            background: #2563eb;
+            color: #ffffff;
             border: none;
             cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s, transform 0.2s;
         }
 
         .form-section form button:hover {
-            background: #005f99;
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
 
         footer {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 20px;
-            background: #007acc;
-            color: #fff;
-            position: relative;
-            bottom: 0;
-            width: 100%;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
         }
 
         footer a {
-            color: #fff;
+            color: #ffffff;
             text-decoration: none;
             font-weight: bold;
-            background: #005f99;
+            background: #2563eb;
             padding: 10px 15px;
-            border-radius: 5px;
-            transition: background 0.3s;
+            border-radius: 8px;
+            transition: background 0.3s, transform 0.2s;
         }
 
         footer a:hover {
-            background: #004080;
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
     </style>
 </head>

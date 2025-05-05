@@ -33,42 +33,46 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Inter', sans-serif;
             margin: 0;
             padding: 0;
             display: flex;
             flex-direction: column;
             min-height: 100vh;
-            background: #e6f7ff;
-            color: #000;
+            background: linear-gradient(135deg, #1e3a8a, #2563eb);
+            /* Sfondo sfumato blu */
+            color: #ffffff;
         }
 
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 20px;
-            background: #007acc;
-            color: #fff;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            /* Sfondo trasparente */
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
         }
 
         header h1 {
             margin: 0;
+            font-size: 1.8rem;
         }
 
         header nav a {
-            color: #fff;
+            color: #ffffff;
             text-decoration: none;
             font-weight: bold;
             margin-left: 15px;
-        }
-
-        header nav a.active {
-            text-decoration: underline;
+            background: #2563eb;
+            padding: 10px 15px;
+            border-radius: 8px;
+            transition: background 0.3s, transform 0.2s;
         }
 
         header nav a:hover {
-            text-decoration: underline;
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
 
         .container {
@@ -80,10 +84,11 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
         }
 
         .profile-section {
-            background: #fff;
+            background: rgba(255, 255, 255, 0.1);
+            /* Sfondo trasparente */
             padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            border-radius: 15px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
         }
 
         .profile-flex {
@@ -97,7 +102,7 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
             height: 100px;
             border-radius: 50%;
             object-fit: cover;
-            border: 2px solid #007acc;
+            border: 2px solid #93c5fd;
         }
 
         .avatar.placeholder {
@@ -115,74 +120,78 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
         .btn {
             display: inline-block;
             padding: 10px 15px;
-            background: #007acc;
-            color: #fff;
+            background: #2563eb;
+            color: #ffffff;
             text-decoration: none;
-            border-radius: 5px;
+            border-radius: 8px;
             font-weight: bold;
-            transition: background 0.3s ease;
+            transition: background 0.3s ease, transform 0.2s;
         }
 
         .btn:hover {
-            background: #005f99;
+            background: #1d4ed8;
+            transform: translateY(-3px);
+        }
+
+        .btn.delete-btn {
+            background: #dc2626; /* Rosso */
+        }
+
+        .btn.delete-btn:hover {
+            background: #b91c1c; /* Rosso scuro */
         }
 
         .user-signals {
-            background: #fff;
+            background: rgba(255, 255, 255, 0.1);
+            /* Sfondo trasparente */
             padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-            max-height: 400px; /* Altezza massima ridotta */
-            overflow-y: auto; /* Abilita lo scorrimento interno */
+            border-radius: 15px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
         }
 
         .segnalazioni-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr); /* 3 colonne */
-            gap: 20px; /* Spaziatura tra i rettangoli */
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
         }
 
         .card {
-            background: #fff;
+            background: rgba(255, 255, 255, 0.2);
+            /* Sfondo trasparente */
             padding: 15px;
             border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            color: #ffffff;
         }
 
         .card h4 {
             margin: 0 0 10px;
-        }
-
-        .btn.small {
-            padding: 5px 10px;
-            font-size: 0.9rem;
+            font-size: 1.2rem;
+            color: #93c5fd;
         }
 
         footer {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 20px;
-            background: #007acc;
-            color: #fff;
-            position: relative;
-            bottom: 0;
-            width: 100%;
-            box-shadow: 0 -2px 5px rgba(0, 0, 0, 0.1);
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
         }
 
         footer a {
-            color: #fff;
+            color: #ffffff;
             text-decoration: none;
             font-weight: bold;
-            background: #005f99;
+            background: #2563eb;
             padding: 10px 15px;
-            border-radius: 5px;
-            transition: background 0.3s;
+            border-radius: 8px;
+            transition: background 0.3s, transform 0.2s;
         }
 
         footer a:hover {
-            background: #004080;
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
     </style>
 </head>
@@ -196,7 +205,7 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
     </header>
     <main class="container">
         <section class="profile-section">
-            <h2>Profilo Utente</h2>
+            <h2><strong><?= htmlspecialchars($_SESSION['username']) ?></strong></h2>
             <div class="profile-flex">
                 <?php if (!empty($u['fotoProfilo'])): ?>
                     <img src="../<?= htmlspecialchars($u['fotoProfilo']) ?>" alt="Foto Profilo" style="width: 100px; height: 100px; border-radius: 50%;">
@@ -224,6 +233,9 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
                             <p><strong>Via:</strong> <?= htmlspecialchars($s['via'] ?? 'Non specificata') ?></p>
                             <p><strong>Civico:</strong> <?= htmlspecialchars($s['civico'] ?? 'Non specificato') ?></p>
                             <a href="../pagine/editSegnalazione.php?id=<?= $s['id'] ?>" class="btn small">Modifica</a>
+                            <a href="../gestori/gestoreEliminaSegnalazione.php?id=<?= $s['id'] ?>" 
+                               class="btn small delete-btn" 
+                               onclick="return confirm('Sei sicuro di voler eliminare questa segnalazione?');">Elimina</a>
                         </div>
                     <?php endforeach; ?>
                 </div>

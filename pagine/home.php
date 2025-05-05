@@ -8,265 +8,356 @@ require_once '../database/conn.php';
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $conn->set_charset('utf8');
 
-// Fetch filter options
-$tipi = $conn->query("SELECT DISTINCT tipo FROM segnalazioni ORDER BY tipo ASC")->fetch_all(MYSQLI_ASSOC);
-$regioni = $conn->query("SELECT id, nome FROM regioni ORDER BY nome ASC")->fetch_all(MYSQLI_ASSOC);
+// Dropdown filtri
+$tipi = $conn->query("SELECT DISTINCT tipo FROM segnalazioni ORDER BY tipo")->fetch_all(MYSQLI_ASSOC);
 
-// Read filters
-$selTipo = $_GET['tipo'] ?? '';
-$selRegione = $_GET['regione'] ?? '';
-$selProvincia = $_GET['provincia'] ?? '';
-$selComuneText = $_GET['comune'] ?? '';
-$selVia = $_GET['via'] ?? '';
-$selData = $_GET['data'] ?? '';
-
-// Build dynamic filters
-$conds = [];
+// Filtri e interazioni
+$filters = [];
 $params = [];
 $types = '';
-if ($selTipo)      { $conds[] = 'seg.tipo = ?';              $params[] = $selTipo;        $types .= 's'; }
-if ($selRegione)   { $conds[] = 'seg.regione = ?';            $params[] = (int)$selRegione; $types .= 'i'; }
-if ($selProvincia) { $conds[] = 'seg.provincia = ?';           $params[] = (int)$selProvincia; $types .= 'i'; }
-if ($selComuneText){ $conds[] = 'seg.comune LIKE ?';          $params[] = "%{$selComuneText}%"; $types .= 's'; }
-if ($selVia)       { $conds[] = 'seg.via LIKE ?';            $params[] = "%{$selVia}%";      $types .= 's'; }
-if ($selData)      { $conds[] = 'DATE(seg.dataSegnalazione) = ?'; $params[] = $selData;        $types .= 's'; }
-
-// Main query with interaction count and liked flag
-$userId = $_SESSION['userId'];
-$sql = "SELECT
-    seg.id,
-    seg.tipo,
-    seg.descrizione,
-    seg.via,
-    seg.civico,
-    r.nome AS regione,
-    p.nome AS provincia,
-    seg.comune,
-    COUNT(i.segnalazione_id) AS interazioni,
-    IF(ui.segnalazione_id IS NULL, 0, 1) AS liked,
-    seg.dataSegnalazione
-  FROM segnalazioni seg
-  LEFT JOIN regioni r ON seg.regione = r.id
-  LEFT JOIN province p ON seg.provincia = p.id
-  LEFT JOIN interazioni i ON seg.id = i.segnalazione_id
-  LEFT JOIN interazioni ui ON seg.id = ui.segnalazione_id AND ui.utente_id = ?";
-$params = array_merge([$userId], $params);
-$types = 'i' . $types;
-if ($conds) {
-    $sql .= ' WHERE ' . implode(' AND ', $conds);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!empty($_POST['tipo'])) {
+        $filters[] = "segnalazioni.tipo = ?";
+        $params[] = $_POST['tipo'];
+        $types .= 's';
+    }
+    if (!empty($_POST['regione'])) {
+        $filters[] = "regioni.id = ?";
+        $params[] = (int)$_POST['regione'];
+        $types .= 'i';
+    }
+    if (!empty($_POST['provincia'])) {
+        $filters[] = "province.id = ?";
+        $params[] = (int)$_POST['provincia'];
+        $types .= 'i';
+    }
+    if (!empty($_POST['comune'])) {
+        $filters[] = "comuni.id = ?";
+        $params[] = (int)$_POST['comune'];
+        $types .= 'i';
+    }
+    if (!empty($_POST['via'])) {
+        $filters[] = "segnalazioni.via LIKE ?";
+        $params[] = '%' . $_POST['via'] . '%';
+        $types .= 's';
+    }
+    if (!empty($_POST['data'])) {
+        $filters[] = "DATE(segnalazioni.dataSegnalazione) = ?";
+        $params[] = $_POST['data'];
+        $types .= 's';
+    }
 }
-$sql .= ' GROUP BY seg.id ORDER BY interazioni DESC, seg.dataSegnalazione DESC';
+
+$sql = "
+  SELECT 
+    segnalazioni.id,
+    segnalazioni.tipo,
+    segnalazioni.descrizione, 
+    comuni.nome AS comune, 
+    segnalazioni.via, 
+    segnalazioni.civico, 
+    segnalazioni.dataSegnalazione,
+    (SELECT COUNT(*) FROM interazioni WHERE interazioni.segnalazione_id = segnalazioni.id) AS interazioni,
+    (SELECT COUNT(*) FROM interazioni WHERE interazioni.segnalazione_id = segnalazioni.id AND interazioni.utente_id = ?) AS liked
+  FROM segnalazioni
+  LEFT JOIN regioni   ON segnalazioni.regione   = regioni.id
+  LEFT JOIN province  ON segnalazioni.provincia = province.id
+  LEFT JOIN comuni    ON segnalazioni.comune    = comuni.id
+";
+if ($filters) {
+    $sql .= " WHERE " . implode(" AND ", $filters);
+}
+$sql .= " ORDER BY interazioni DESC, segnalazioni.dataSegnalazione DESC LIMIT 9";
+
 $stmt = $conn->prepare($sql);
-$stmt->bind_param($types, ...$params);
+$bindParams = array_merge([&$_SESSION['userId']], $params);
+$bindTypes  = 'i' . $types;
+$stmt->bind_param($bindTypes, ...$bindParams);
 $stmt->execute();
 $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 ?>
 <!DOCTYPE html>
 <html lang="it">
+
 <head>
     <meta charset="UTF-8">
     <title>Home - Civicvois</title>
+    <link rel="stylesheet" href="../assets/css/style.css">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
         body {
-            font-family: Arial, sans-serif;
+            font-family: 'Inter', sans-serif;
             margin: 0;
             padding: 0;
             display: flex;
             flex-direction: column;
             min-height: 100vh;
-            background: #e6f7ff;
-            color: #000;
+            background: linear-gradient(135deg, #1e3a8a, #2563eb);
+            color: #fff;
         }
+
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 10px 20px;
-            background: #007acc;
-            color: #fff;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
         }
+
         header h1 {
             margin: 0;
-            font-size: 1.5rem;
+            font-size: 1.8rem;
         }
-        .welcome {
-            margin-right: 15px;
-            font-size: 1rem;
+
+        header .welcome {
+            margin-left: 20px;
+            color: #93c5fd;
         }
-        a.logout {
+
+        header a.logout {
             color: #fff;
             text-decoration: none;
-            background: #005f99;
-            padding: 8px 12px;
-            border-radius: 4px;
-            transition: background .3s;
+            font-weight: bold;
+            background: #2563eb;
+            padding: 10px 15px;
+            border-radius: 8px;
+            transition: background .3s, transform .2s;
         }
-        a.logout:hover {
-            background: #004080;
+
+        header a.logout:hover {
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
+
         .container {
             flex: 1;
             padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
         }
+
         .filters {
             display: flex;
-            gap: 10px;
             flex-wrap: wrap;
-            margin-bottom: 20px;
+            gap: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
         }
+
         .filters select,
-        .filters input,
-        .filters button {
-            padding: 8px;
-            border: 1px solid #007acc;
-            border-radius: 4px;
-            font-size: 0.9rem;
+        .filters input {
+            padding: 10px;
+            font-size: 1rem;
+            border: 1px solid #93c5fd;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.2);
+            outline: none;
+            transition: border .3s;
+            color: #000;
         }
-        .filters select:disabled,
-        .filters input:disabled {
-            background: #ddd;
+
+        .filters select:focus,
+        .filters input:focus {
+            border-color: #2563eb;
         }
+
         .filters button {
-            background: #007acc;
+            padding: 10px 20px;
+            font-size: 1rem;
+            background: #2563eb;
             color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
             cursor: pointer;
-            transition: background .3s;
+            transition: background .3s, transform .2s;
         }
+
         .filters button:hover {
-            background: #005f99;
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
+
         .segnalazioni-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: 20px;
-            padding-bottom: 20px;
         }
+
         .card {
-            background: #fff;
+            background: rgba(255, 255, 255, 0.2);
             padding: 15px;
             border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-            position: relative;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
         }
-        .card img {
-            width: 100%;
-            height: auto;
-            border-radius: 5px;
-            margin-bottom: 10px;
-        }
-        .interactions-btn {
-            position: absolute;
-            bottom: 15px;
-            right: 15px;
-            background: transparent;
-            border: none;
+
+        .card h3 {
+            margin: 0 0 10px;
             font-size: 1.2rem;
-            cursor: pointer;
-            color: #007acc;
+            color: #93c5fd;
         }
-        .interactions-btn.liked {
-            color: #e0245e;
-            cursor: default;
-        }
-        footer {
-            margin-top: auto;
-            padding: 10px 0;
-            background: #007acc;
+
+        .interaction {
             display: flex;
-            justify-content: center;
-            gap: 20px;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
         }
-        footer a {
+
+        .like-btn {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #dc2626;
+            transition: transform .2s;
+        }
+
+        .like-btn.liked {
+            color: #f87171;
+        }
+
+        .like-btn:hover {
+            transform: scale(1.2);
+        }
+
+        .like-count {
+            font-size: 1.2rem;
             color: #fff;
-            text-decoration: none;
-            padding: 8px 12px;
-            background: #005f99;
-            border-radius: 4px;
-            transition: background .3s;
         }
+
+        footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: rgba(0, 0, 0, 0.2);
+            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        footer a {
+            color: #ffffff;
+            text-decoration: none;
+            font-weight: bold;
+            background: #2563eb;
+            padding: 10px 15px;
+            border-radius: 8px;
+            transition: background 0.3s, transform 0.2s;
+        }
+
         footer a:hover {
-            background: #004080;
+            background: #1d4ed8;
+            transform: translateY(-3px);
         }
     </style>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
+
 <body>
-<header>
-    <h1>Civicvois</h1>
-    <div>
-        <span class="welcome"><?= htmlspecialchars($_SESSION['username']) ?></span>
-        <a href="../autenticazione/paginaLogout.php" class="logout">Logout</a>
-    </div>
-</header>
-<div class="container">
-    <form class="filters" method="get">
-        <select name="tipo">
-            <option value="">Tutti i tipi</option>
-            <?php foreach ($tipi as $t): ?>
-                <option value="<?= htmlspecialchars($t) ?>" <?= $t === $selTipo ? 'selected' : '' ?>><?= htmlspecialchars($t) ?></option>
-            <?php endforeach; ?>
-        </select>
-        <select name="regione" id="regione">
-            <option value="">Tutte le regioni</option>
-            <?php foreach ($regioni as $r): ?>
-                <option value="<?= $r['id'] ?>" <?= $r['id'] == $selRegione ? 'selected' : '' ?>><?= htmlspecialchars($r['nome']) ?></option>
-            <?php endforeach; ?>
-        </select>
-        <select name="provincia" id="provincia" <?= $selRegione ? '' : 'disabled' ?> >
-            <option value="">Tutte le province</option>
-        </select>
-        <input type="text" name="comune" placeholder="Comune" value="<?= htmlspecialchars($selComuneText) ?>" <?= $selProvincia ? '' : 'disabled' ?> />
-        <input type="text" name="via" placeholder="Via" value="<?= htmlspecialchars($selVia) ?>" <?= $selComuneText ? '' : 'disabled' ?> />
-        <input type="date" name="data" value="<?= htmlspecialchars($selData) ?>" />
-        <button type="submit">Filtra</button>
-    </form>
-    <div class="segnalazioni-grid">
-        <?php if (count($segn) > 0): foreach ($segn as $s): ?>
-            <div class="card" data-id="<?= $s['id'] ?>">
-                <?php if (!empty($s['foto'])): ?>
-                    <img src="../<?= htmlspecialchars($s['foto']) ?>" alt="Segnalazione">
-                <?php endif; ?>
-                <h3><?= htmlspecialchars($s['tipo']) ?></h3>
-                <p><?= nl2br(htmlspecialchars($s['descrizione'])) ?></p>
-                <?php if (!empty($s['regione'])): ?><p><strong>Regione:</strong> <?= htmlspecialchars($s['regione']) ?></p><?php endif; ?>
-                <?php if (!empty($s['provincia'])): ?><p><strong>Provincia:</strong> <?= htmlspecialchars($s['provincia']) ?></p><?php endif; ?>
-                <?php if (!empty($s['comune'])): ?><p><strong>Comune:</strong> <?= htmlspecialchars($s['comune']) ?></p><?php endif; ?>
-                <?php if (!empty($s['via']) || !empty($s['civico'])): ?><p><strong>Indirizzo:</strong> <?= htmlspecialchars($s['via']) ?> <?= htmlspecialchars($s['civico']) ?></p><?php endif; ?>
-                <p><strong>Data:</strong> <?= (new DateTime($s['dataSegnalazione']))->format('d/m/Y') ?></p>
-                <button class="interactions-btn <?= $s['liked'] ? 'liked' : '' ?>" <?= $s['liked'] ? 'disabled' : '' ?>>❤️ <span><?= $s['interazioni'] ?></span></button>
-            </div>
-        <?php endforeach; else: ?>
-            <p>Nessuna segnalazione disponibile.</p>
-        <?php endif; ?>
-    </div>
-</div>
-<script>
-    const debounce = (fn, delay = 500) => { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); }; };
-    $(function(){
-        $('#regione').change(function(){
-            let r = $(this).val();
-            $('#provincia').prop('disabled', !r).html('<option value="">Tutte le province</option>');
-            if(r) {
-                $.getJSON('../ajax/getProvince.php',{regione:r},pl=>pl.forEach(p=>$('#provincia').append(new Option(p.nome,p.id))));
-            }
-            $('[name=comune],[name=via]').prop('disabled', true).val('');
+    <header>
+        <h1>Civicvois</h1>
+        <div>
+            <span class="welcome"><?= htmlspecialchars($_SESSION['username']); ?></span>
+            <a href="../autenticazione/paginaLogout.php" class="logout">Logout</a>
+        </div>
+    </header>
+    <main class="container">
+        <form class="filters" method="post" id="filterForm" onsubmit="$('select').prop('disabled', false)">
+            <select name="tipo">
+                <option value="">Tipo di segnalazione</option>
+                <?php foreach ($tipi as $t): ?>
+                    <option value="<?= htmlspecialchars($t['tipo']) ?>" <?= (isset($_POST['tipo']) && $_POST['tipo'] === $t['tipo']) ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($t['tipo']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <select id="regione" name="regione" disabled>
+                <option value="">Regione</option>
+            </select>
+            <select id="provincia" name="provincia" disabled>
+                <option value="">Provincia</option>
+            </select>
+            <select id="comune" name="comune" disabled>
+                <option value="">Comune</option>
+            </select>
+            <input type="text" name="via" placeholder="Via" value="<?= htmlspecialchars($_POST['via'] ?? '') ?>">
+            <input type="date" name="data" value="<?= htmlspecialchars($_POST['data'] ?? '') ?>">
+            <button type="submit">Filtra</button>
+        </form>
+        <div class="segnalazioni-grid">
+            <?php if (count($segn)): foreach ($segn as $s): ?>
+                    <div class="card">
+                        <h3><?= htmlspecialchars($s['tipo']) ?></h3>
+                        <p><?= nl2br(htmlspecialchars($s['descrizione'])) ?></p>
+                        <p><strong>Comune:</strong> <?= htmlspecialchars($s['comune']) ?></p>
+                        <p><strong>Via:</strong> <?= htmlspecialchars($s['via'] ?? 'Non specificata') ?></p>
+                        <p><strong>Civico:</strong> <?= htmlspecialchars($s['civico'] ?? 'Non specificato') ?></p>
+                        <p><strong>Data:</strong> <?= (new DateTime($s['dataSegnalazione']))->format('d/m/Y') ?></p>
+                        <div class="interaction">
+                            <button class="like-btn <?= $s['liked'] ? 'liked' : '' ?>" data-id="<?= $s['id'] ?>">❤️</button>
+                            <span class="like-count"><?= $s['interazioni'] ?></span>
+                        </div>
+                    </div>
+                <?php endforeach;
+            else: ?>
+                <p style="color:#fff; text-align:center;">Nessuna segnalazione da mostrare.</p>
+            <?php endif; ?>
+        </div>
+    </main>
+    <footer>
+        <a href="home.php" class="home">Home</a>
+        <a href="createSegnalazioni.php" class="new">Nuova Segnalazione</a>
+        <a href="profilo.php" class="prof">Profilo</a>
+    </footer>
+    <script>
+        $(function() {
+            // Caricamento regioni → province → comuni
+            $.getJSON('../ajax/getRegioni.php', data => {
+                data.forEach(r => $('#regione').append(new Option(r.nome, r.id)));
+                $('#regione').prop('disabled', false);
+            });
+            $('#regione').change(function() {
+                $('#provincia').empty().append('<option>Provincia</option>').prop('disabled', true);
+                $('#comune').empty().append('<option>Comune</option>').prop('disabled', true);
+                $.getJSON('../ajax/getProvince.php', {
+                    regione: $(this).val()
+                }, data => {
+                    data.forEach(p => $('#provincia').append(new Option(p.nome, p.id)));
+                    $('#provincia').prop('disabled', false);
+                });
+            });
+            $('#provincia').change(function() {
+                $('#comune').empty().append('<option>Comune</option>');
+                $.getJSON('../ajax/getComuni.php', {
+                    provincia: $(this).val()
+                }, data => {
+                    data.forEach(c => $('#comune').append(new Option(c.nome, c.id)));
+                    $('#comune').prop('disabled', false);
+                });
+            });
+            // Like/unlike
+            $(document).on('click', '.like-btn', function () {
+                const btn = $(this);
+                const idSegnalazione = btn.data('id');
+
+                $.post('../gestori/gestoreInterazioni.php', { idSegnalazione: idSegnalazione }, function (response) {
+                    if (response.action === 'added') {
+                        btn.addClass('liked');
+                    } else if (response.action === 'removed') {
+                        btn.removeClass('liked');
+                    }
+                    // Aggiorna il contatore con il valore restituito dal server
+                    btn.next('.like-count').text(response.interazioni);
+                }, 'json').fail(function (xhr) {
+                    console.error('Errore AJAX:', xhr.responseText);
+                    alert('Si è verificato un errore. Riprova.');
+                });
+            });
         });
-        $('#provincia').change(function(){ $('[name=comune]').prop('disabled', !$(this).val()).val(''); });
-        $('[name=comune]').on('input', function(){ $('[name=via]').prop('disabled', !$(this).val()).val(''); });
-        $('.interactions-btn').click(debounce(function(){
-            const b = $(this), id = b.closest('.card').data('id');
-            if(b.prop('disabled')) return;
-            $.post('../api/incrementaInterazioni.php',{id},res=>{
-                if(res.success) { b.find('span').text(res.interazioni); b.addClass('liked').prop('disabled', true); }
-                else alert(res.message||'Errore');
-            },'json');
-        },500));
-    });
-</script>
-<footer>
-    <a href="home.php">Home</a>
-    <a href="createSegnalazione.php">Nuova Segnalazione</a>
-    <a href="profilo.php">Profilo</a>
-</footer>
+    </script>
 </body>
+
 </html>
