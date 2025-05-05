@@ -1,0 +1,6 @@
+controllo registrazione se utente ha già quell'username o quella mail (controllare anche quando va in modifica)
+
+
+creare interfaccia per interagire (il social)
+
+
