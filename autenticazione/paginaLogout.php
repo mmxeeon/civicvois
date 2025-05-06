@@ -1,7 +1,6 @@
-
 <?php
 session_start();
 session_destroy();
-header("Location: paginaLogin.php");
+header("Location: ../pagine/home.php");
 exit();
 ?>

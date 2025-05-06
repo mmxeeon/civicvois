@@ -49,7 +49,7 @@
             border: 1px solid #93c5fd; /* Azzurro chiaro */
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.2); /* Sfondo trasparente */
-            color: #ffffff;
+            color: #000000;
             outline: none;
             transition: border 0.3s;
         }

@@ -15,6 +15,8 @@ $comune = isset($_POST['comune']) ? $_POST['comune'] : null;
 $via = isset($_POST['via']) ? $_POST['via'] : null;
 $civico = isset($_POST['civico']) ? $_POST['civico'] : null;
 $tipo = isset($_POST['tipo']) ? $_POST['tipo'] : null;
+$descrizione = isset($_POST['descrizione']) ? $_POST['descrizione'] : null;
+$foto = isset($_FILES['foto']) ? $_FILES['foto'] : null;
 
 // Verifica che tutti i campi siano stati inviati
 if (!$regione || !$provincia || !$comune || !$via || !$civico || !$tipo) {
@@ -24,18 +26,34 @@ if (!$regione || !$provincia || !$comune || !$via || !$civico || !$tipo) {
 // Gestione del caricamento della foto
 $foto = '';
 if (!empty($_FILES['foto']['name'])) {
-    $foto = 'assets/img/' . basename($_FILES['foto']['name']);
-    if (!move_uploaded_file($_FILES['foto']['tmp_name'], '../' . $foto)) {
+    // Verifica che il file sia un'immagine
+    $allowedTypes = ['image/jpeg', 'image/png', 'image/gif'];
+    $fileType = mime_content_type($_FILES['foto']['tmp_name']);
+    if (!in_array($fileType, $allowedTypes)) {
+        die("Errore: il file caricato non è un'immagine valida.");
+    }
+
+    // Genera un nome univoco per la foto
+    $foto = 'assets/img/' . uniqid() . '_' . basename($_FILES['foto']['name']);
+
+    // Verifica che la directory esista e abbia i permessi corretti
+    $uploadDir = '../assets/img/';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0777, true); // Crea la directory se non esiste
+    }
+
+    // Sposta il file nella directory specificata
+    if (!move_uploaded_file($_FILES['foto']['tmp_name'], $uploadDir . basename($foto))) {
         die("Errore nel caricamento della foto.");
     }
 }
 
 // Prepara la query per inserire i dati nel database
 $stmt = $conn->prepare("
-    INSERT INTO segnalazioni (idUtente, regione, provincia, comune, via, civico, tipo, foto) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO segnalazioni (idUtente, regione, provincia, comune, via, civico, tipo, descrizione, foto) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ");
-$stmt->bind_param("issssiss", $idU, $regione, $provincia, $comune, $via, $civico, $tipo, $foto);
+$stmt->bind_param("issssisss", $idU, $regione, $provincia, $comune, $via, $civico, $tipo, $descrizione, $foto);
 
 // Esegui la query
 if ($stmt->execute()) {

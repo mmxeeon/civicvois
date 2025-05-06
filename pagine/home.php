@@ -32,9 +32,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $types .= 'i';
     }
     if (!empty($_POST['comune'])) {
-        $filters[] = "comuni.id = ?";
-        $params[] = (int)$_POST['comune'];
-        $types .= 'i';
+        $filters[] = "comuni.nome LIKE ?";
+        $params[] = '%' . $_POST['comune'] . '%';
+        $types .= 's';
     }
     if (!empty($_POST['via'])) {
         $filters[] = "segnalazioni.via LIKE ?";
@@ -53,16 +53,16 @@ $sql = "
     segnalazioni.id,
     segnalazioni.tipo,
     segnalazioni.descrizione, 
-    comuni.nome AS comune, 
+    segnalazioni.comune, 
     segnalazioni.via, 
     segnalazioni.civico, 
     segnalazioni.dataSegnalazione,
+    segnalazioni.foto, -- Aggiungi il campo foto
     (SELECT COUNT(*) FROM interazioni WHERE interazioni.segnalazione_id = segnalazioni.id) AS interazioni,
     (SELECT COUNT(*) FROM interazioni WHERE interazioni.segnalazione_id = segnalazioni.id AND interazioni.utente_id = ?) AS liked
   FROM segnalazioni
   LEFT JOIN regioni   ON segnalazioni.regione   = regioni.id
   LEFT JOIN province  ON segnalazioni.provincia = province.id
-  LEFT JOIN comuni    ON segnalazioni.comune    = comuni.id
 ";
 if ($filters) {
     $sql .= " WHERE " . implode(" AND ", $filters);
@@ -231,6 +231,10 @@ $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
         }
 
         footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -260,7 +264,7 @@ $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     <header>
         <h1>Civicvois</h1>
         <div>
-            <span class="welcome"><?= htmlspecialchars($_SESSION['username']); ?></span>
+            <a href="profilo.php"> <span class="welcome"><?= htmlspecialchars($_SESSION['username']); ?></span></a>
             <a href="../autenticazione/paginaLogout.php" class="logout">Logout</a>
         </div>
     </header>
@@ -280,9 +284,7 @@ $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
             <select id="provincia" name="provincia" disabled>
                 <option value="">Provincia</option>
             </select>
-            <select id="comune" name="comune" disabled>
-                <option value="">Comune</option>
-            </select>
+            <input type="text" id="comune" name="comune" placeholder="Comune" value="<?= htmlspecialchars($_POST['comune'] ?? '') ?>" disabled>
             <input type="text" name="via" placeholder="Via" value="<?= htmlspecialchars($_POST['via'] ?? '') ?>">
             <input type="date" name="data" value="<?= htmlspecialchars($_POST['data'] ?? '') ?>">
             <button type="submit">Filtra</button>
@@ -291,8 +293,11 @@ $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
             <?php if (count($segn)): foreach ($segn as $s): ?>
                     <div class="card">
                         <h3><?= htmlspecialchars($s['tipo']) ?></h3>
-                        <p><?= nl2br(htmlspecialchars($s['descrizione'])) ?></p>
-                        <p><strong>Comune:</strong> <?= htmlspecialchars($s['comune']) ?></p>
+                        <?php if (!empty($s['foto'])): ?>
+                            <img src="../<?= htmlspecialchars($s['foto']) ?>" alt="Foto segnalazione" style="width: 100%; border-radius: 10px; margin-bottom: 10px;">
+                        <?php endif; ?>
+                        <p><strong>Descrizione:</strong> <?= nl2br(htmlspecialchars($s['descrizione'])) ?></p>
+                        <p><strong>Comune:</strong> <?= htmlspecialchars($s['comune'] ?? 'Non specificato') ?></p>
                         <p><strong>Via:</strong> <?= htmlspecialchars($s['via'] ?? 'Non specificata') ?></p>
                         <p><strong>Civico:</strong> <?= htmlspecialchars($s['civico'] ?? 'Non specificato') ?></p>
                         <p><strong>Data:</strong> <?= (new DateTime($s['dataSegnalazione']))->format('d/m/Y') ?></p>
@@ -314,36 +319,39 @@ $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     </footer>
     <script>
         $(function() {
-            // Caricamento regioni → province → comuni
+            // Caricamento delle regioni
             $.getJSON('../ajax/getRegioni.php', data => {
                 data.forEach(r => $('#regione').append(new Option(r.nome, r.id)));
                 $('#regione').prop('disabled', false);
             });
+
+            // Quando cambia la regione, carica le province
             $('#regione').change(function() {
-                $('#provincia').empty().append('<option>Provincia</option>').prop('disabled', true);
-                $('#comune').empty().append('<option>Comune</option>').prop('disabled', true);
-                $.getJSON('../ajax/getProvince.php', {
-                    regione: $(this).val()
-                }, data => {
-                    data.forEach(p => $('#provincia').append(new Option(p.nome, p.id)));
-                    $('#provincia').prop('disabled', false);
-                });
+                const regioneId = $(this).val();
+                $('#provincia').empty().append('<option value="">Provincia</option>').prop('disabled', true);
+                $('#comune').prop('disabled', true).val(''); // Disabilita il comune
+                if (regioneId) {
+                    $.getJSON(`../ajax/getProvince.php?regione_id=${regioneId}`, data => {
+                        data.forEach(p => $('#provincia').append(new Option(p.nome, p.id)));
+                        $('#provincia').prop('disabled', false); // Abilita la provincia
+                    });
+                }
             });
+
+            // Quando cambia la provincia, abilita il campo comune
             $('#provincia').change(function() {
-                $('#comune').empty().append('<option>Comune</option>');
-                $.getJSON('../ajax/getComuni.php', {
-                    provincia: $(this).val()
-                }, data => {
-                    data.forEach(c => $('#comune').append(new Option(c.nome, c.id)));
-                    $('#comune').prop('disabled', false);
-                });
+                const provinciaId = $(this).val();
+                $('#comune').prop('disabled', !provinciaId).val(''); // Abilita o disabilita il comune
             });
+
             // Like/unlike
-            $(document).on('click', '.like-btn', function () {
+            $(document).on('click', '.like-btn', function() {
                 const btn = $(this);
                 const idSegnalazione = btn.data('id');
 
-                $.post('../gestori/gestoreInterazioni.php', { idSegnalazione: idSegnalazione }, function (response) {
+                $.post('../gestori/gestoreInterazioni.php', {
+                    idSegnalazione: idSegnalazione
+                }, function(response) {
                     if (response.action === 'added') {
                         btn.addClass('liked');
                     } else if (response.action === 'removed') {
@@ -351,7 +359,7 @@ $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
                     }
                     // Aggiorna il contatore con il valore restituito dal server
                     btn.next('.like-count').text(response.interazioni);
-                }, 'json').fail(function (xhr) {
+                }, 'json').fail(function(xhr) {
                     console.error('Errore AJAX:', xhr.responseText);
                     alert('Si è verificato un errore. Riprova.');
                 });

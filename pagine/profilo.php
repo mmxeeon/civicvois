@@ -19,7 +19,7 @@ if (!$u) {
 }
 
 // Recupera segnalazioni dell'utente
-$stmtS = $conn->prepare("SELECT id, comune, tipo, descrizione, dataSegnalazione, via, civico FROM segnalazioni WHERE idUtente = ? ORDER BY dataSegnalazione DESC");
+$stmtS = $conn->prepare("SELECT id, comune, tipo, descrizione, dataSegnalazione, via, civico, foto FROM segnalazioni WHERE idUtente = ? ORDER BY dataSegnalazione DESC");
 $stmtS->bind_param("i", $_SESSION['userId']);
 $stmtS->execute();
 $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
@@ -171,6 +171,10 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
         }
 
         footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -227,6 +231,9 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
                     <?php foreach ($segn as $s): ?>
                         <div class="card">
                             <h4><?= htmlspecialchars($s['tipo']) ?></h4>
+                            <?php if (!empty($s['foto'])): ?>
+                                <img src="../<?= htmlspecialchars($s['foto']) ?>" alt="Foto segnalazione" style="width: 100%; border-radius: 10px; margin-bottom: 10px;">
+                            <?php endif; ?>
                             <p><strong>Descrizione:</strong> <?= nl2br(htmlspecialchars($s['descrizione'])) ?></p>
                             <p><strong>Comune:</strong> <?= htmlspecialchars($s['comune']) ?></p>
                             <p><strong>Data:</strong> <?= (new DateTime($s['dataSegnalazione']))->format('d/m/Y') ?></p>

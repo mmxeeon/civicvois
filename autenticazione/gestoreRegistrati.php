@@ -8,7 +8,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $email = trim($_POST['email']);
     $dataDiNascita = $_POST['dataDiNascita'];
     $username = trim($_POST['username']);
-    $password = password_hash($_POST['password'], PASSWORD_BCRYPT);
+    $password = md5($_POST['password']); // Usa una libreria più sicura in produzione
     $bio = trim($_POST['bio']);
     $fotoProfilo = $_FILES['fotoProfilo'];
 
@@ -46,6 +46,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header("Location: paginaRegistrati.php");
         exit();
     }
+
+    // Salva il percorso relativo della foto nel database
+    $fotoProfiloPath = "assets/img/" . $fileName;
 
     // Inserisci l'utente nel database
     $stmt = $conn->prepare("INSERT INTO utenti (nome, cognome, email, dataDiNascita, username, passwd, bio, fotoProfilo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");

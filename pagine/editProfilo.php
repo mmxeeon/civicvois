@@ -1,5 +1,10 @@
 <?php
 session_start();
+if (!isset($_SESSION['userId'])) {
+    header("Location: ../autenticazione/paginaLogin.php");
+    exit();
+}
+
 require_once '../database/conn.php';
 
 if (!isset($_SESSION['username'])) {
@@ -162,6 +167,10 @@ $stmt->close();
         }
 
         footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -190,11 +199,6 @@ $stmt->close();
 <body>
     <header>
         <h1>Civicvois</h1>
-        <nav>
-            <a href="home.php">Home</a>
-            <a href="profilo.php">Profilo</a>
-            <a href="../autenticazione/paginaLogout.php">Logout</a>
-        </nav>
     </header>
     <main class="container">
         <section class="form-section">
