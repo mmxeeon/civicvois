@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Creato il: Apr 26, 2025 alle 16:21
+-- Creato il: Mag 06, 2025 alle 21:05
 -- Versione del server: 10.4.32-MariaDB
 -- Versione PHP: 8.2.12
 
@@ -24,14 +24,23 @@ SET time_zone = "+00:00";
 -- --------------------------------------------------------
 
 --
--- Struttura della tabella `comuni`
+-- Struttura della tabella `interazioni`
 --
 
-CREATE TABLE `comuni` (
-  `id` int(11) NOT NULL,
-  `nome` varchar(255) NOT NULL,
-  `provincia_id` int(11) NOT NULL
+CREATE TABLE `interazioni` (
+  `utente_id` int(11) NOT NULL,
+  `segnalazione_id` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dump dei dati per la tabella `interazioni`
+--
+
+INSERT INTO `interazioni` (`utente_id`, `segnalazione_id`) VALUES
+(2, 15),
+(2, 16),
+(6, 16),
+(7, 16);
 
 -- --------------------------------------------------------
 
@@ -213,26 +222,23 @@ CREATE TABLE `segnalazioni` (
   `civico` varchar(4) NOT NULL,
   `dataSegnalazione` datetime DEFAULT current_timestamp(),
   `regione` varchar(255) NOT NULL,
-  `provincia` varchar(255) NOT NULL
+  `provincia` varchar(255) NOT NULL,
+  `interazioni` int(11) NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci;
 
 --
 -- Dump dei dati per la tabella `segnalazioni`
 --
 
-INSERT INTO `segnalazioni` (`id`, `idUtente`, `tipo`, `descrizione`, `foto`, `comune`, `via`, `civico`, `dataSegnalazione`, `regione`, `provincia`) VALUES
-(1, 1, '', 'strada rotta', '', '', 'via roma ', '', '2025-04-16 14:18:06', '', ''),
-(2, 1, 'cartello stradale: vandalizzato', 'CARTELLO STOP RICOPERTO DI ADESIVO', '', '', 'via roma', '56', '2025-04-16 14:19:10', '', ''),
-(3, 2, 'cartello stradale: vandalizzato', NULL, '', 'verano brianza', 'san giuseppe', '63', '2025-04-25 15:09:03', '9', '47'),
-(4, 2, 'animali: ritrovati', NULL, '', 'Milano', 'via roma', '95', '2025-04-25 15:14:43', '9', '46'),
-(5, 2, 'cartello stradale: vandalizzato', 'gfwsdfsafdsadfsafdsadf', '', 'Milano', 'via roma', '78', '2025-04-25 15:28:21', '9', '46'),
-(6, 2, 'strada: invalicabile per via di ostacoli', NULL, '', 'Aosta', 'via roma', '56', '2025-04-25 16:23:53', '19', '101'),
-(7, 2, 'infrastrutture pubbliche: cavalcavia', NULL, '', 'Milano', 'via roma', '45', '2025-04-25 16:26:23', '9', '46'),
-(8, 2, 'infrastrutture pubbliche: rotonde con prato (lasciato incolto)', NULL, '', 'verano brianza', 'via matera', '23', '2025-04-25 16:26:45', '9', '44'),
-(9, 2, 'infrastrutture pubbliche: cavalcavia', NULL, '', '123rwefrf', 'sdfqsdfas', '123', '2025-04-25 16:27:01', '5', '21'),
-(10, 2, 'privati: tutto ciò che è proveniente da abitazioni private che potrebbe ostacolare o portare problemi allo stato urbano', NULL, '', 'verano brianza', 'asdfasf', '123', '2025-04-25 16:27:18', '4', '16'),
-(11, 2, 'cartello stradale: mancante', 'stop', '', 'Milano', 'via roma', '78', '2025-04-25 16:54:27', '9', '46'),
-(12, 2, 'strada: rotta', 'piena di buchi', '', 'Verano Brianza', 'via roma', '56', '2025-04-26 14:38:37', '9', '47');
+INSERT INTO `segnalazioni` (`id`, `idUtente`, `tipo`, `descrizione`, `foto`, `comune`, `via`, `civico`, `dataSegnalazione`, `regione`, `provincia`, `interazioni`) VALUES
+(11, 2, 'cartello stradale: mancante', 'MANCA UNO STOP', '/assets/img/681a367d4b4b6_download.jpg', 'Verano Brianza', 'via roma', '78', '2025-04-25 16:54:27', '9', '46', 5),
+(12, 2, 'strada: piena di buchi', 'piena di buchi', '/assets/img/681a38a5b9faa_BUCHE.jpg', 'Verano Brianza', 'via roma', '45', '2025-04-26 14:38:37', '9', '47', 3),
+(15, 2, 'cartello stradale: mancante', 'MANCA UN CARTELLO \"DARE PRECEDENZA\"', '/assets/img/681a366d9c929_download.jpg', 'Carate Brianza', 'via roma', '34', '2025-05-06 17:05:51', '9', '47', 0),
+(16, 2, 'animali: smarriti', 'SMARRITO QUESTO CUCCIOLO NEI PRESSI DELLA VIA SELEZIONATA', 'assets/img/681a3a39bcd9e_GattoCucciolo.jpg', 'Milano', 'Via Roma', '12', '2025-05-06 18:35:05', '9', '46', 0),
+(17, 7, 'cartello stradale: caduto', 'CADUTO CARTELLO PRECEDENZA MOLTO PERICOLOSO', 'assets/img/681a3d53153c8_cartello-stradale-caduto-dare-via-2j27kyj.jpg', 'Milano', 'via Genova', '45', '2025-05-06 18:48:19', '9', '46', 0),
+(18, 7, 'strada: piena di buchi', 'INVALICABILE...', 'assets/img/681a3d8b8a42f_BUCHE.jpg', 'Verano Brianza', 'via Roma', '89', '2025-05-06 18:49:15', '9', '47', 0),
+(19, 6, 'strada: piena di buchi', 'INVALICABILE', 'assets/img/681a3f26ac321_BUCHE.jpg', 'Verano Brianza', 'via Roma', '45', '2025-05-06 18:56:06', '9', '47', 0),
+(20, 6, 'cartello stradale: mancante', 'MANCA UNO STOP E UN OBBLIGO SVOLTA A DESTRA', 'assets/img/681a3f5583e65_download.jpg', 'Milano', 'via Roma', '56', '2025-05-06 18:56:53', '9', '46', 0);
 
 -- --------------------------------------------------------
 
@@ -260,19 +266,21 @@ CREATE TABLE `utenti` (
 --
 
 INSERT INTO `utenti` (`id`, `nome`, `cognome`, `email`, `dataDiNascita`, `fotoProfilo`, `username`, `passwd`, `bio`, `tipo`, `resetToken`, `tokenExpiry`) VALUES
-(1, 'mattia', 'molteni', 'matti.molte@gmail.com', '2006-11-29', '../assets/img/', 'mattia', 'dbc3ede8cf726a5f892a7808f647aa3e', 'mattia', 'user', NULL, NULL),
-(2, 'Nicolò', 'Molteni', 'matti.molte@gmail.com', '2006-11-29', '../assets/img/profile_picture.jpg', 'mattia_molteni', 'dbc3ede8cf726a5f892a7808f647aa3e', 'mattia', 'user', '61c4e9f693ea3ec1afe698b6959ea5dc', '2025-04-26 15:49:38');
+(2, 'Mattia', 'Molteni', 'matti.molte@gmail.com', '2006-11-29', 'assets/img/6818fcd9e80f7_profile_picture.jpg', 'mattia', 'dbc3ede8cf726a5f892a7808f647aa3e', 'Ciao sono Mattia, profilo per fare delle segnalazioni allo stato INFAME.', 'user', '607712c1a7d817ba9f72954500cea6f7', '2025-05-05 21:03:51'),
+(6, 'Luca', 'Molteni', 'luchino.molteni@icloud.com', '2012-04-09', 'assets/img/681a3dde3abbb_luchino.png', 'luca', 'ff377aff39a9345a9cca803fb5c5c081', 'verano capitale', 'user', NULL, NULL),
+(7, 'Adila', 'Saciba', 'adilasaciba@gmail.com', '1980-02-08', 'assets/img/681a3c9f6d970_mamma.png', 'adila', 'adbb8177c4a1afa5cc2aa60ae416c773', 'CIAO SONO LA MAMMA DI MATTIA', 'user', NULL, NULL),
+(8, 'Maurizio', 'Molteni', 'mauriziomolteni@gmail.com', '1975-09-30', 'assets/img/681a5b9a2a822_papa.png', 'maurizio', '6f06dc0e69739c5c093e2e2d87d99689', 'CIAO IO SONO IL PAPA', 'user', NULL, NULL);
 
 --
 -- Indici per le tabelle scaricate
 --
 
 --
--- Indici per le tabelle `comuni`
+-- Indici per le tabelle `interazioni`
 --
-ALTER TABLE `comuni`
-  ADD PRIMARY KEY (`id`),
-  ADD KEY `provincia_id` (`provincia_id`);
+ALTER TABLE `interazioni`
+  ADD PRIMARY KEY (`utente_id`,`segnalazione_id`),
+  ADD KEY `segnalazione_id` (`segnalazione_id`);
 
 --
 -- Indici per le tabelle `province`
@@ -306,12 +314,6 @@ ALTER TABLE `utenti`
 --
 
 --
--- AUTO_INCREMENT per la tabella `comuni`
---
-ALTER TABLE `comuni`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
-
---
 -- AUTO_INCREMENT per la tabella `province`
 --
 ALTER TABLE `province`
@@ -327,23 +329,24 @@ ALTER TABLE `regioni`
 -- AUTO_INCREMENT per la tabella `segnalazioni`
 --
 ALTER TABLE `segnalazioni`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=13;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=21;
 
 --
 -- AUTO_INCREMENT per la tabella `utenti`
 --
 ALTER TABLE `utenti`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=9;
 
 --
 -- Limiti per le tabelle scaricate
 --
 
 --
--- Limiti per la tabella `comuni`
+-- Limiti per la tabella `interazioni`
 --
-ALTER TABLE `comuni`
-  ADD CONSTRAINT `comuni_ibfk_1` FOREIGN KEY (`provincia_id`) REFERENCES `province` (`id`);
+ALTER TABLE `interazioni`
+  ADD CONSTRAINT `interazioni_ibfk_1` FOREIGN KEY (`utente_id`) REFERENCES `utenti` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `interazioni_ibfk_2` FOREIGN KEY (`segnalazione_id`) REFERENCES `segnalazioni` (`id`) ON DELETE CASCADE;
 
 --
 -- Limiti per la tabella `province`
