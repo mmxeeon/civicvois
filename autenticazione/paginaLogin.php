@@ -18,7 +18,8 @@
             align-items: center;
             justify-content: center;
             min-height: 100vh;
-            background: linear-gradient(135deg, #1e3a8a, #2563eb); /* Sfondo sfumato blu */
+            background: linear-gradient(135deg, #1e3a8a, #2563eb);
+            /* Sfondo sfumato blu */
             color: #ffffff;
             text-align: center;
         }
@@ -26,16 +27,19 @@
         .container {
             max-width: 400px;
             padding: 30px;
-            background: rgba(255, 255, 255, 0.1); /* Sfondo bianco trasparente */
+            background: rgba(255, 255, 255, 0.1);
+            /* Sfondo bianco trasparente */
             border-radius: 15px;
             box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(10px); /* Effetto vetro smerigliato */
+            backdrop-filter: blur(10px);
+            /* Effetto vetro smerigliato */
         }
 
         h2 {
             font-size: 2rem;
             margin-bottom: 1.5rem;
-            color: #dbeafe; /* Azzurro molto chiaro */
+            color: #dbeafe;
+            /* Azzurro molto chiaro */
         }
 
         form {
@@ -47,23 +51,27 @@
         input {
             padding: 12px;
             font-size: 1rem;
-            border: 1px solid #93c5fd; /* Azzurro chiaro */
+            border: 1px solid #93c5fd;
+            /* Azzurro chiaro */
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.2); /* Sfondo trasparente */
+            background: rgba(255, 255, 255, 0.4);
+            /* Sfondo trasparente */
             color: #000000;
             outline: none;
             transition: border 0.3s;
         }
 
         input:focus {
-            border-color: #2563eb; /* Blu acceso */
+            border-color: #2563eb;
+            /* Blu acceso */
         }
 
         button {
             padding: 12px;
             font-size: 1rem;
             color: #ffffff;
-            background: #2563eb; /* Blu acceso */
+            background: #2563eb;
+            /* Blu acceso */
             border: none;
             border-radius: 8px;
             font-weight: 600;
@@ -73,19 +81,23 @@
         }
 
         button:hover {
-            background: #1d4ed8; /* Blu pi첫 scuro per hover */
-            transform: translateY(-3px); /* Sollevamento al passaggio del mouse */
+            background: #1d4ed8;
+            /* Blu pi첫 scuro per hover */
+            transform: translateY(-3px);
+            /* Sollevamento al passaggio del mouse */
             box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
         }
 
         p {
             margin-top: 10px;
             font-size: 0.9rem;
-            color: #dbeafe; /* Azzurro molto chiaro */
+            color: #dbeafe;
+            /* Azzurro molto chiaro */
         }
 
         p a {
-            color: #93c5fd; /* Azzurro chiaro */
+            color: #93c5fd;
+            /* Azzurro chiaro */
             text-decoration: none;
             font-weight: bold;
         }
@@ -105,7 +117,6 @@
             <button type="submit">Accedi</button>
         </form>
         <p><a href="paginaRegistrati.php">Non hai un account? Registrati</a></p>
-        <p><a href="recuperaPassword.php">Password dimenticata?</a></p>
     </div>
 </body>
 

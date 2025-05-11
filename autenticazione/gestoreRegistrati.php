@@ -7,8 +7,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $cognome = trim($_POST['cognome']);
     $email = trim($_POST['email']);
     $dataDiNascita = $_POST['dataDiNascita'];
+    $regione = intval($_POST['regione']);
+    $provincia = intval($_POST['provincia']);
     $username = trim($_POST['username']);
-    $password = md5($_POST['password']); // Usa una libreria più sicura in produzione
+    $password = md5($_POST['password']);
     $bio = trim($_POST['bio']);
     $fotoProfilo = $_FILES['fotoProfilo'];
 
@@ -26,33 +28,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         exit();
     }
 
-    // Salva la foto profilo
-    $targetDir = "../assets/img/";
-    $fileName = uniqid() . "_" . basename($fotoProfilo['name']);
-    $targetFilePath = $targetDir . $fileName;
-    $fileType = strtolower(pathinfo($targetFilePath, PATHINFO_EXTENSION));
-
-    // Controlla il tipo di file
-    $allowedTypes = ['jpg', 'jpeg', 'png', 'gif'];
-    if (!in_array($fileType, $allowedTypes)) {
-        $_SESSION['error'] = "Formato immagine non supportato. Usa JPG, JPEG, PNG o GIF.";
-        header("Location: paginaRegistrati.php");
-        exit();
+    // Upload foto
+    if (!empty($_FILES['fotoProfilo']['name'])) {
+        $dir  = "../assets/img/";
+        $file = uniqid() . '_' . basename($_FILES['fotoProfilo']['name']);
+        $path = $dir . $file;
+        $ext  = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        if (!in_array($ext, ['jpg', 'jpeg', 'png', 'gif'])) {
+            $_SESSION['error'] = "Formato file non valido.";
+            header("Location: paginaRegistrati.php");
+            exit;
+        }
+        if (move_uploaded_file($_FILES['fotoProfilo']['tmp_name'], $path)) {
+            $fotoProfilo = "assets/img/" . $file;
+            if (!empty($currentFotoProfilo) && file_exists("../" . $currentFotoProfilo)) {
+                unlink("../" . $currentFotoProfilo);
+            }
+        } else {
+            $_SESSION['error'] = "Errore durante il caricamento della foto.";
+            header("Location: paginaRegistrati");
+            exit;
+        }
+    } else {
+        $fotoProfilo = $currentFotoProfilo;
     }
-
-    // Sposta il file nella cartella di destinazione
-    if (!move_uploaded_file($fotoProfilo['tmp_name'], $targetFilePath)) {
-        $_SESSION['error'] = "Errore nel caricamento della foto profilo.";
-        header("Location: paginaRegistrati.php");
-        exit();
-    }
-
-    // Salva il percorso relativo della foto nel database
-    $fotoProfiloPath = "assets/img/" . $fileName;
 
     // Inserisci l'utente nel database
-    $stmt = $conn->prepare("INSERT INTO utenti (nome, cognome, email, dataDiNascita, username, passwd, bio, fotoProfilo) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    $stmt->bind_param("ssssssss", $nome, $cognome, $email, $dataDiNascita, $username, $password, $bio, $fileName);
+    $stmt = $conn->prepare("INSERT INTO utenti (nome, cognome, email, dataDiNascita, regione, provincia, username, passwd, bio, fotoProfilo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    $stmt->bind_param("ssssiissss", $nome, $cognome, $email, $dataDiNascita, $regione, $provincia, $username, $password, $bio, $fotoProfilo);
 
     if ($stmt->execute()) {
         $_SESSION['success'] = "Registrazione completata con successo!";
@@ -65,4 +68,3 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->close();
     $conn->close();
 }
-?>

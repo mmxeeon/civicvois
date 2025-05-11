@@ -1,7 +1,9 @@
 
 <?php
-class DataBase {
-    public static function getConnection() {
+class DataBase
+{
+    public static function getConnection()
+    {
         $host = 'localhost';
         $user = 'root';
         $pass = '';

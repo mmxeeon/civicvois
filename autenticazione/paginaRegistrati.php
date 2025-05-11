@@ -1,3 +1,8 @@
+<?php
+// Recupera le regioni dal database
+require_once '../database/conn.php';
+$regioni = $conn->query("SELECT id, nome FROM regioni ORDER BY nome")->fetch_all(MYSQLI_ASSOC);
+?>
 <?php session_start(); ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -5,7 +10,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
+    <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
     <title>Registrazione - Civicvois</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <?php
@@ -55,13 +60,14 @@
         }
 
         input,
-        textarea {
+        textarea,
+        select {
             padding: 12px;
             font-size: 1rem;
             border: 1px solid #93c5fd;
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.2);
-            color: #ffffff;
+            color: #000000;
             outline: none;
             transition: border 0.3s;
         }
@@ -72,7 +78,8 @@
         }
 
         input:focus,
-        textarea:focus {
+        textarea:focus,
+        select:focus {
             border-color: #2563eb;
         }
 
@@ -119,7 +126,7 @@
 
         .file-input label {
             background: #2563eb;
-            color: #ffffff;
+            color: #000000;
             padding: 10px 15px;
             border-radius: 8px;
             cursor: pointer;
@@ -135,6 +142,7 @@
             display: none;
         }
     </style>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 </head>
 
 <body>
@@ -145,6 +153,22 @@
             <input type="text" name="cognome" placeholder="Cognome" required>
             <input type="email" name="email" placeholder="Email" required>
             <input type="date" name="dataDiNascita" required>
+
+            <!-- Select Regione -->
+            <label for="regione">Regione</label>
+            <select id="regione" name="regione" required>
+                <option value="">Seleziona Regione</option>
+                <?php foreach ($regioni as $regione): ?>
+                    <option value="<?= $regione['id'] ?>"><?= htmlspecialchars($regione['nome']) ?></option>
+                <?php endforeach; ?>
+            </select>
+
+            <!-- Select Provincia -->
+            <label for="provincia">Provincia</label>
+            <select id="provincia" name="provincia" required disabled>
+                <option value="">Seleziona Provincia</option>
+            </select>
+
             <div class="file-input">
                 <label for="fotoProfilo">Carica Foto Profilo</label>
                 <input type="file" name="fotoProfilo" id="fotoProfilo" accept="image/*">
@@ -156,6 +180,24 @@
         </form>
         <p><a href="paginaLogin.php">Hai già un account? Accedi</a></p>
     </div>
+
+    <script>
+        $(document).ready(function() {
+            // Carica le province in base alla regione selezionata
+            $('#regione').change(function() {
+                const regioneId = $(this).val();
+                $('#provincia').prop('disabled', !regioneId).empty().append('<option value="">Seleziona Provincia</option>');
+
+                if (regioneId) {
+                    $.getJSON(`../ajax/getProvince.php?regione_id=${regioneId}`, function(data) {
+                        data.forEach(function(provincia) {
+                            $('#provincia').append(`<option value="${provincia.id}">${provincia.nome}</option>`);
+                        });
+                    });
+                }
+            });
+        });
+    </script>
 </body>
 
 </html>

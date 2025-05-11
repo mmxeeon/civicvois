@@ -2,7 +2,8 @@
 <?php
 include 'conn.php';
 
-function getUserByUsername($username) {
+function getUserByUsername($username)
+{
     global $conn;
     $stmt = $conn->prepare("SELECT * FROM utenti WHERE username = ?");
     $stmt->bind_param("s", $username);

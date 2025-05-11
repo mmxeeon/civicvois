@@ -21,4 +21,3 @@ if ($result->num_rows === 1) {
 } else {
     echo "<script>alert('Credenziali non valide');window.location.href='paginaLogin.php';</script>";
 }
-?>

@@ -31,54 +31,55 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
     <meta charset="UTF-8">
     <title>Profilo - Civicvois</title>
     <link rel="stylesheet" href="../assets/css/style.css">
-        <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
-        <?php include __DIR__ . '../header.php'; ?>
+    <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
+    <?php include __DIR__ . '../header.php'; ?>
 
     <style>
-    header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
-  background: rgba(0,0,0,0.3);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
-}
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.3);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
 
-header h1 {
-  font-size: 2rem;
-  font-weight: 700;
-  margin: 0;
-}
+        header h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 0;
+        }
 
-header .logout {
-  background: #2563eb;
-  color: #fff;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  transition: background 0.3s, transform 0.2s;
-}
+        header .logout {
+            background: #2563eb;
+            color: #fff;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            transition: background 0.3s, transform 0.2s;
+        }
 
-header .logout:hover {
-  background: #1d4ed8;
-  transform: translateY(-2px);
-}
+        header .logout:hover {
+            background: #1d4ed8;
+            transform: translateY(-2px);
+        }
 
-header .header-left {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
+        header .header-left {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
 
-.avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  object-fit: cover;
-}
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+        }
 
-.logo {
-  border: none; /* rimuove qualsiasi bordo aggiuntivo */
-}
+        .logo {
+            border: none;
+            /* rimuove qualsiasi bordo aggiuntivo */
+        }
 
         body {
             font-family: 'Inter', sans-serif;
@@ -98,7 +99,8 @@ header .header-left {
             display: flex;
             flex-direction: column;
             gap: 20px;
-            padding-bottom: 100px; /* Altezza del footer + margine extra */
+            padding-bottom: 100px;
+            /* Altezza del footer + margine extra */
         }
 
         .profile-section {
@@ -152,11 +154,13 @@ header .header-left {
         }
 
         .btn.delete-btn {
-            background: #dc2626; /* Rosso */
+            background: #dc2626;
+            /* Rosso */
         }
 
         .btn.delete-btn:hover {
-            background: #b91c1c; /* Rosso scuro */
+            background: #b91c1c;
+            /* Rosso scuro */
         }
 
         .user-signals {
@@ -188,9 +192,50 @@ header .header-left {
             color: #93c5fd;
         }
 
-        footer{ position:fixed; bottom:0; left:0; width:100%; padding:1rem; background:rgba(0,0,0,0.3); box-shadow:0 -4px 10px rgba(0,0,0,0.3); display:flex; justify-content:space-around; gap:1rem; }
-        footer a{ flex:1; background:#2563eb;color:#fff;padding:0.75rem;border-radius:0.5rem;text-align:center;font-weight:600;transition:background 0.3s,transform 0.2s; }
-        footer a:hover{background:#1d4ed8;transform:translateY(-2px);}    
+        footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 1rem;
+            background: rgba(0, 0, 0, 0.3);
+            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
+            display: flex;
+            justify-content: space-around;
+            gap: 1rem;
+        }
+
+        footer a {
+            flex: 1;
+            background: #2563eb;
+            color: #fff;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            text-align: center;
+            font-weight: 600;
+            transition: background 0.3s, transform 0.2s;
+        }
+
+        footer a:hover {
+            background: #1d4ed8;
+            transform: translateY(-2px);
+        }
+
+        .profile-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .btn.logout-btn {
+            background: #dc2626;
+            /* Rosso */
+        }
+
+        .btn.logout-btn:hover {
+            background: #b91c1c;
+            /* Rosso scuro */
+        }
     </style>
 </head>
 
@@ -208,7 +253,10 @@ header .header-left {
                     <p><strong><?= htmlspecialchars($u['nome']) ?> <?= htmlspecialchars($u['cognome']) ?></strong></p>
                     <p>Email: <?= htmlspecialchars($u['email']) ?></p>
                     <p><?= nl2br(htmlspecialchars($u['bio'])) ?></p>
-                    <a href="../pagine/editProfilo.php" class="btn">Modifica Profilo</a>
+                    <div class="profile-buttons">
+                        <a href="../pagine/editProfilo.php" class="btn">Modifica Profilo</a>
+                        <a href="../autenticazione/paginaLogout.php" class="btn logout-btn">Logout</a>
+                    </div>
                 </div>
             </div>
         </section>
@@ -228,9 +276,9 @@ header .header-left {
                             <p><strong>Via:</strong> <?= htmlspecialchars($s['via'] ?? 'Non specificata') ?></p>
                             <p><strong>Civico:</strong> <?= htmlspecialchars($s['civico'] ?? 'Non specificato') ?></p>
                             <a href="../pagine/editSegnalazione.php?id=<?= $s['id'] ?>" class="btn small">Modifica</a>
-                            <a href="../gestori/gestoreEliminaSegnalazione.php?id=<?= $s['id'] ?>" 
-                               class="btn small delete-btn" 
-                               onclick="return confirm('Sei sicuro di voler eliminare questa segnalazione?');">Elimina</a>
+                            <a href="../gestori/gestoreEliminaSegnalazione.php?id=<?= $s['id'] ?>"
+                                class="btn small delete-btn"
+                                onclick="return confirm('Sei sicuro di voler eliminare questa segnalazione?');">Elimina</a>
                         </div>
                     <?php endforeach; ?>
                 </div>
