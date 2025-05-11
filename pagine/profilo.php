@@ -31,7 +31,55 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
     <meta charset="UTF-8">
     <title>Profilo - Civicvois</title>
     <link rel="stylesheet" href="../assets/css/style.css">
+        <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
+        <?php include __DIR__ . '../header.php'; ?>
+
     <style>
+    header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: rgba(0,0,0,0.3);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+header .logout {
+  background: #2563eb;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  transition: background 0.3s, transform 0.2s;
+}
+
+header .logout:hover {
+  background: #1d4ed8;
+  transform: translateY(-2px);
+}
+
+header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.logo {
+  border: none; /* rimuove qualsiasi bordo aggiuntivo */
+}
+
         body {
             font-family: 'Inter', sans-serif;
             margin: 0;
@@ -44,43 +92,13 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
             color: #ffffff;
         }
 
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            /* Sfondo trasparente */
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        header h1 {
-            margin: 0;
-            font-size: 1.8rem;
-        }
-
-        header nav a {
-            color: #ffffff;
-            text-decoration: none;
-            font-weight: bold;
-            margin-left: 15px;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background 0.3s, transform 0.2s;
-        }
-
-        header nav a:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
-
         .container {
             flex: 1;
             padding: 20px;
             display: flex;
             flex-direction: column;
             gap: 20px;
+            padding-bottom: 100px; /* Altezza del footer + margine extra */
         }
 
         .profile-section {
@@ -170,43 +188,13 @@ $segn = $stmtS->get_result()->fetch_all(MYSQLI_ASSOC);
             color: #93c5fd;
         }
 
-        footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        footer a {
-            color: #ffffff;
-            text-decoration: none;
-            font-weight: bold;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background 0.3s, transform 0.2s;
-        }
-
-        footer a:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
+        footer{ position:fixed; bottom:0; left:0; width:100%; padding:1rem; background:rgba(0,0,0,0.3); box-shadow:0 -4px 10px rgba(0,0,0,0.3); display:flex; justify-content:space-around; gap:1rem; }
+        footer a{ flex:1; background:#2563eb;color:#fff;padding:0.75rem;border-radius:0.5rem;text-align:center;font-weight:600;transition:background 0.3s,transform 0.2s; }
+        footer a:hover{background:#1d4ed8;transform:translateY(-2px);}    
     </style>
 </head>
 
 <body>
-    <header>
-        <h1>Civicvois</h1>
-        <nav>
-            <a href="../autenticazione/paginaLogout.php">Logout</a>
-        </nav>
-    </header>
     <main class="container">
         <section class="profile-section">
             <h2><strong><?= htmlspecialchars($_SESSION['username']) ?></strong></h2>

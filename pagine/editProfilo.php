@@ -44,9 +44,57 @@ $stmt->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
+        <?php include __DIR__ . '../header.php'; ?>
+
     <title>Modifica Profilo - Civicvois</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
+    header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: rgba(0,0,0,0.3);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+header .logout {
+  background: #2563eb;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  transition: background 0.3s, transform 0.2s;
+}
+
+header .logout:hover {
+  background: #1d4ed8;
+  transform: translateY(-2px);
+}
+
+header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.logo {
+  border: none; /* rimuove qualsiasi bordo aggiuntivo */
+}
+
         body {
             font-family: 'Inter', sans-serif;
             margin: 0;
@@ -58,42 +106,13 @@ $stmt->close();
             color: #fff;
         }
 
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        header h1 {
-            margin: 0;
-            font-size: 1.8rem;
-        }
-
-        header nav a {
-            color: #fff;
-            text-decoration: none;
-            font-weight: bold;
-            margin-left: 15px;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background .3s, transform .2s;
-        }
-
-        header nav a:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
-
         .container {
             flex: 1;
             padding: 20px;
             display: flex;
             justify-content: center;
             align-items: center;
+            padding-bottom: 100px; /* Altezza del footer + margine extra */
         }
 
         .form-section {
@@ -166,40 +185,21 @@ $stmt->close();
             margin-bottom: 10px;
         }
 
-        footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        footer a {
-            color: #fff;
-            text-decoration: none;
-            font-weight: bold;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background .3s, transform .2s;
-        }
-
-        footer a:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
+        footer{ position:fixed; bottom:0; left:0; width:100%; padding:1rem; background:rgba(0,0,0,0.3); box-shadow:0 -4px 10px rgba(0,0,0,0.3); display:flex; justify-content:space-around; gap:1rem; }
+        footer a{ flex:1; background:#2563eb;color:#fff;padding:0.75rem;border-radius:0.5rem;text-align:center;font-weight:600;transition:background 0.3s,transform 0.2s; }
+        footer a:hover{background:#1d4ed8;transform:translateY(-2px);}
     </style>
 </head>
 
 <body>
-    <header>
-        <h1>Civicvois</h1>
-    </header>
+<header>
+    <img src="../assets/img/civicvoisLogo.png" alt="Logo Idea" class="avatar logo">
+    <h1>Civicvois</h1>
+    <div class="profile-container">
+                   <a href="profilo.php"> <img src="../assets/img/6818fcd9e80f7_profile_picture.jpg" alt="Avatar Utente" class="avatar"> </a>
+                <a href="../autenticazione/paginaLogout.php" class="logout">Logout</a>
+    </div>
+</header>
     <main class="container">
         <section class="form-section">
             <h2>Modifica Profilo</h2>
@@ -226,6 +226,18 @@ $stmt->close();
                     <div style="width:100px;height:100px;border-radius:50%;background:#ccc;"></div>
                 <?php endif; ?>
                 <input type="file" id="fotoProfilo" name="fotoProfilo" accept="image/*">
+                            <!-- Sezione Cambio Password -->
+            <h3>Cambia Password</h3>
+            <label for="oldPassword">Password Attuale</label>
+            <input type="password" id="oldPassword" name="oldPassword">
+            <small id="oldPassFeedback" style="color:#f87171;"></small>
+
+            <label for="newPassword">Nuova Password</label>
+            <input type="password" id="newPassword" name="newPassword">
+
+            <label for="confirmPassword">Conferma Nuova Password</label>
+            <input type="password" id="confirmPassword" name="confirmPassword">
+            <small id="matchFeedback" style="color:#f87171;"></small>
                 <button type="submit">Salva Modifiche</button>
             </form>
         </section>
@@ -234,6 +246,28 @@ $stmt->close();
         <a href="home.php">Home</a>
         <a href="profilo.php">Profilo</a>
     </footer>
+    <script>
+$(function(){
+    // Verifica vecchia password
+    $('#oldPassword').on('input', function(){
+        $.post('../gestori/gestoreCheckPassword.php', { password: $(this).val() }, function(res){
+            $('#oldPassFeedback').text(res.valid ? '' : 'Password non corretta');
+        }, 'json');
+    });
+    // Check nuove password
+    $('#newPassword, #confirmPassword').on('input', function(){
+        const p1 = $('#newPassword').val();
+        const p2 = $('#confirmPassword').val();
+        $('#matchFeedback').text(p1 && p2 ? (p1===p2 ? 'Le password coincidono.' : 'Le password non coincidono.') : '');
+    });
+    // Validazione form
+    $('#editProfileForm').on('submit', function(e){
+        if ($('#oldPassFeedback').text() || $('#matchFeedback').text()==='Le password non coincidono.') {
+            e.preventDefault(); alert('Correggi gli errori prima di inviare.');
+        }
+    });
+});
+</script>
 </body>
 
 </html>

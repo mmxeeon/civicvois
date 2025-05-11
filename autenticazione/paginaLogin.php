@@ -5,6 +5,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
     <title>Login - Civicvois</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
@@ -72,7 +73,7 @@
         }
 
         button:hover {
-            background: #1d4ed8; /* Blu più scuro per hover */
+            background: #1d4ed8; /* Blu pi첫 scuro per hover */
             transform: translateY(-3px); /* Sollevamento al passaggio del mouse */
             box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
         }

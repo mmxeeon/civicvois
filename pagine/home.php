@@ -5,6 +5,7 @@ if (!isset($_SESSION['username'])) {
     exit();
 }
 require_once '../database/conn.php';
+include __DIR__ . '../header.php';
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $conn->set_charset('utf8');
 
@@ -67,7 +68,7 @@ $sql = "
 if ($filters) {
     $sql .= " WHERE " . implode(" AND ", $filters);
 }
-$sql .= " ORDER BY interazioni DESC, segnalazioni.dataSegnalazione DESC LIMIT 9";
+$sql .= " ORDER BY interazioni DESC, segnalazioni.dataSegnalazione DESC LIMIT 12";
 
 $stmt = $conn->prepare($sql);
 $bindParams = array_merge([&$_SESSION['userId']], $params);
@@ -75,6 +76,16 @@ $bindTypes  = 'i' . $types;
 $stmt->bind_param($bindTypes, ...$bindParams);
 $stmt->execute();
 $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+
+// Prepara e esegue la query
+$stmt = $conn->prepare("SELECT fotoProfilo FROM utenti WHERE username = ?");
+$stmt->bind_param("s", $_SESSION['username']);
+$stmt->execute();
+
+// Associa il risultato e recupera il valore
+$stmt->bind_result($fotoProfilo);
+$stmt->fetch();
+$stmt->close();
 ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -83,191 +94,72 @@ $segn = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
     <meta charset="UTF-8">
     <title>Home - Civicvois</title>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            min-height: 100vh;
-            background: linear-gradient(135deg, #1e3a8a, #2563eb);
-            color: #fff;
-        }
+        * { box-sizing:border-box; margin:0; padding:0; }
+        html { font-size:16px; }
+        body { font-family:'Inter',sans-serif; min-height:100vh; display:flex; flex-direction:column; background:linear-gradient(135deg,#1e3a8a,#2563eb); color:#fff; }
+        header { display:flex; justify-content:space-between; align-items:center; padding:1rem; background:rgba(0,0,0,0.3); box-shadow:0 4px 10px rgba(0,0,0,0.3); }
+        header h1 { font-size:2rem; font-weight:700; }
+        header .logout { background:#2563eb;color:#fff;padding:0.5rem 1rem;border-radius:0.5rem;transition:background 0.3s,transform 0.2s; }
+        header .logout:hover{ background:#1d4ed8;transform:translateY(-2px); }
+        header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
 
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  /* border e margine già definiti altrove */
+}
 
-        header h1 {
-            margin: 0;
-            font-size: 1.8rem;
-        }
+.logo {
+  /* sovrascrive solo il border, se non vuoi il cerchio colorato intorno al logo */
+  border: none;
+}
+        main.container { flex:1; padding:1rem; display:flex; flex-direction:column; gap:1rem; padding-bottom: 100px; /* Altezza del footer + margine extra */}
+        .filters{ display:flex; flex-wrap:wrap; gap:0.75rem; background:rgba(255,255,255,0.1); padding:0.75rem; border-radius:0.75rem; box-shadow:0 4px 10px rgba(0,0,0,0.3);}        
+        .filters select,.filters input,.filters button{padding:0.5rem;font-size:1rem;border:1px solid rgba(255,255,255,0.4);border-radius:0.5rem;background:rgba(255,255,255,0.2);color:#000;transition:border-color 0.3s;}
+        .filters select:focus,.filters input:focus{border-color:#93c5fd;}
+        .filters button{background:#2563eb;color:#fff;font-weight:600;cursor:pointer;transition:background 0.3s,transform 0.2s;}
+        .filters button:hover{background:#1d4ed8;transform:translateY(-2px);}        
+        .slider{ flex:1; display:flex; overflow-x:auto; scroll-snap-type:x mandatory; }
+        .card{ flex:0 0 90%; max-width:90%; background:rgba(255,255,255,0.1); margin-right:1rem; border-radius:0.75rem; box-shadow:0 4px 10px rgba(0,0,0,0.3); padding:1rem; scroll-snap-align:start; display:flex; flex-direction:column; justify-content:space-between; }
+        .card:last-child{ margin-right:0; }
+        .card h3{font-size:1.25rem;color:#93c5fd;margin-bottom:0.5rem;}
+        .card img{width:100%;border-radius:0.5rem;margin-bottom:0.75rem;}
+        .card p{font-size:0.9rem;margin-bottom:0.5rem;}
+        .interaction{ display:flex; align-items:center; gap:0.5rem; }
+        .like-btn{background:none;border:none;font-size:1.5rem;cursor:pointer;transition:transform 0.2s;color:#dc2626;}
+        .like-btn.liked{color:#f87171;} .like-btn:hover{transform:scale(1.2);} .like-count{font-size:1rem;}
+        footer{ position:fixed; bottom:0; left:0; width:100%; padding:1rem; background:rgba(0,0,0,0.3); box-shadow:0 -4px 10px rgba(0,0,0,0.3); display:flex; justify-content:space-around; gap:1rem; }
+        footer a{ flex:1; background:#2563eb;color:#fff;padding:0.75rem;border-radius:0.5rem;text-align:center;font-weight:600;transition:background 0.3s,transform 0.2s; }
+        footer a:hover{background:#1d4ed8;transform:translateY(-2px);}        
+        @media(max-width:768px){header h1{font-size:1.75rem;} .filters{padding:0.5rem;} }
+        @media(max-width:480px){html{font-size:14px;}header{flex-direction:column;gap:0.5rem;} .filters{flex-direction:column;gap:0.5rem;} .footer{flex-direction:column;gap:0.5rem;} }
+        .profile-container {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
 
-        header .welcome {
-            margin-left: 20px;
-            color: #93c5fd;
-        }
-
-        header a.logout {
-            color: #fff;
-            text-decoration: none;
-            font-weight: bold;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background .3s, transform .2s;
-        }
-
-        header a.logout:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
-
-        .container {
-            flex: 1;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .filters {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 15px;
-            background: rgba(255, 255, 255, 0.1);
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        .filters select,
-        .filters input {
-            padding: 10px;
-            font-size: 1rem;
-            border: 1px solid #93c5fd;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.2);
-            outline: none;
-            transition: border .3s;
-            color: #000;
-        }
-
-        .filters select:focus,
-        .filters input:focus {
-            border-color: #2563eb;
-        }
-
-        .filters button {
-            padding: 10px 20px;
-            font-size: 1rem;
-            background: #2563eb;
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: background .3s, transform .2s;
-        }
-
-        .filters button:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
-
-        .segnalazioni-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-        }
-
-        .card {
-            background: rgba(255, 255, 255, 0.2);
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        .card h3 {
-            margin: 0 0 10px;
-            font-size: 1.2rem;
-            color: #93c5fd;
-        }
-
-        .interaction {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 10px;
-        }
-
-        .like-btn {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: #dc2626;
-            transition: transform .2s;
-        }
-
-        .like-btn.liked {
-            color: #f87171;
-        }
-
-        .like-btn:hover {
-            transform: scale(1.2);
-        }
-
-        .like-count {
-            font-size: 1.2rem;
-            color: #fff;
-        }
-
-        footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        footer a {
-            color: #ffffff;
-            text-decoration: none;
-            font-weight: bold;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background 0.3s, transform 0.2s;
-        }
-
-        footer a:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
+.profile-container .avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid #fff;
+}
     </style>
+</style>
 </head>
 
 <body>
-    <header>
-        <h1>Civicvois</h1>
-        <div>
-            <a href="profilo.php"> <span class="welcome"><?= htmlspecialchars($_SESSION['username']); ?></span></a>
-            <a href="../autenticazione/paginaLogout.php" class="logout">Logout</a>
-        </div>
-    </header>
     <main class="container">
         <form class="filters" method="post" id="filterForm" onsubmit="$('select').prop('disabled', false)">
             <select name="tipo">

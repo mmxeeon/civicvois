@@ -63,150 +63,210 @@ if ($result) {
 ?>
 <!DOCTYPE html>
 <html lang="it">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Modifica Segnalazione</title>
+    <title>Modifica Segnalazione - Civicvois</title>
+    <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <?php include __DIR__ . '../header.php'; ?>
+
     <style>
-        /* Stile generale */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: rgba(0,0,0,0.3);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+header .logout {
+  background: #2563eb;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  transition: background 0.3s, transform 0.2s;
+}
+
+header .logout:hover {
+  background: #1d4ed8;
+  transform: translateY(-2px);
+}
+
+header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.logo {
+  border: none; /* rimuove qualsiasi bordo aggiuntivo */
+}
+
+        /* Reset e base */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html { font-size: 16px; }
         body {
             font-family: 'Inter', sans-serif;
-            margin: 0;
-            padding: 0;
             min-height: 100vh;
             background: linear-gradient(135deg, #1e3a8a, #2563eb);
             color: #fff;
             display: flex;
             flex-direction: column;
         }
+        a { text-decoration: none; color: inherit; }
 
-        header {
-            background: rgba(0, 0, 0, 0.2);
-            padding: 15px 20px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-            text-align: center;
-        }
 
-        header h1 {
-            margin: 0;
-            font-size: 2rem;
-            color: #fff;
-        }
 
-        .container {
+        /* Main Container */
+        main.container {
             flex: 1;
             display: flex;
             justify-content: center;
             align-items: center;
-            padding: 20px;
+            padding: 2rem;
+            padding-bottom: 100px; /* spazio per footer */
         }
-
         .form-section {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 20px;
-            border-radius: 15px;
-            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+            background: rgba(255,255,255,0.1);
+            padding: 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.3);
             width: 100%;
             max-width: 600px;
         }
-
         .form-section h2 {
             text-align: center;
             color: #dbeafe;
-            margin-bottom: 20px;
+            margin-bottom: 1.5rem;
+            font-size: 1.75rem;
         }
-
         .form-section label {
-            font-weight: bold;
-            color: #dbeafe;
             display: block;
-            margin-bottom: 5px;
+            margin-bottom: 0.5rem;
+            font-weight: 600;
+            color: #dbeafe;
         }
-
         .form-section input,
         .form-section select,
-        .form-section textarea,
-        .form-section button {
+        .form-section textarea {
             width: 100%;
-            padding: 12px;
-            font-size: 1rem;
-            border: 1px solid #93c5fd;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.2);
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border: 1px solid rgba(255,255,255,0.4);
+            border-radius: 0.5rem;
+            background: rgba(255,255,255,0.2);
             color: #000;
-            outline: none;
-            margin-bottom: 15px;
-            transition: border 0.3s, background 0.3s;
+            transition: border-color 0.3s;
         }
-
         .form-section input:focus,
         .form-section select:focus,
         .form-section textarea:focus {
-            border-color: #2563eb;
+            border-color: #93c5fd;
         }
+        .form-section textarea { resize: vertical; min-height: 120px; }
+        .form-section img.preview { max-width: 100%; border-radius: 0.5rem; margin-bottom: 1rem; }
 
-        .form-section textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
-
+        /* Pulsanti */
         .form-section button {
-            background: #2563eb;
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            font-size: 1rem;
+            font-weight: 600;
             color: #fff;
+            background: #2563eb;
             border: none;
+            border-radius: 0.5rem;
             cursor: pointer;
-            font-weight: bold;
             transition: background 0.3s, transform 0.2s;
+            width: 100%;
         }
-
         .form-section button:hover {
             background: #1d4ed8;
-            transform: translateY(-3px);
+            transform: translateY(-2px);
+        }
+        
+        /* Immagini */
+        .form-section img {
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid #93c5fd;
+            margin-bottom: 10px;
         }
 
-        img.preview {
-            max-width: 100%;
-            height: auto;
-            border-radius: 8px;
-            margin-bottom: 15px;
-        }
-
+        /* Footer fisso */
         footer {
-            background: rgba(0, 0, 0, 0.2);
-            padding: 15px 20px;
-            text-align: center;
-            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 1rem 2rem;
+            background: rgba(0,0,0,0.3);
+            box-shadow: 0 -4px 10px rgba(0,0,0,0.3);
+            display: flex;
+            justify-content: space-around;
+            gap: 1rem;
         }
-
         footer a {
-            color: #fff;
-            text-decoration: none;
-            font-weight: bold;
+            flex: 1;
             background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
+            color: #fff;
+            padding: 0.75rem;
+            border-radius: 0.5rem;
+            text-align: center;
+            font-weight: 600;
             transition: background 0.3s, transform 0.2s;
         }
-
         footer a:hover {
             background: #1d4ed8;
-            transform: translateY(-3px);
+            transform: translateY(-2px);
+        }
+
+        /* Media Queries */
+        @media (max-width: 768px) {
+            header h1 { font-size: 2rem; }
+            .form-section { padding: 1.5rem; }
+            .form-section h2 { font-size: 1.5rem; }
+        }
+        @media (max-width: 480px) {
+            html { font-size: 14px; }
+            header h1 { font-size: 1.75rem; }
+            main.container { padding: 1rem; padding-bottom: 100px;}
+            .form-section { padding: 1rem; }
+            .form-section h2 { font-size: 1.25rem; }
         }
     </style>
 </head>
-
 <body>
-    <header>
-        <h1>Modifica Segnalazione</h1>
-    </header>
+<header>
+    <img src="../assets/img/civicvoisLogo.png" alt="Logo Idea" class="avatar logo">
+    <h1>Civicvois</h1>
+    <div class="profile-container">
+                   <a href="profilo.php"> <img src="../assets/img/6818fcd9e80f7_profile_picture.jpg" alt="Avatar Utente" class="avatar"> </a>
+                <a href="../autenticazione/paginaLogout.php" class="logout">Logout</a>
+    </div>
+</header>
     <main class="container">
         <section class="form-section">
             <?php if (isset($_SESSION['error'])): ?>
-                <p style="color:red; text-align: center;"><?= $_SESSION['error'];
-                                                            unset($_SESSION['error']); ?></p>
+                <p style="color: #f87171; text-align: center; margin-bottom: 1rem;"><?= $_SESSION['error']; unset($_SESSION['error']); ?></p>
             <?php endif; ?>
             <h2>Dettagli Segnalazione</h2>
             <form method="post" action="../gestori/gestoreEditSegnalazione.php" enctype="multipart/form-data">
@@ -221,13 +281,13 @@ if ($result) {
                 </select>
 
                 <label for="descrizione">Descrizione</label>
-                <textarea id="descrizione" name="descrizione" rows="4" required><?= htmlspecialchars($segnalazione['descrizione']) ?></textarea>
+                <textarea id="descrizione" name="descrizione" required><?= htmlspecialchars($segnalazione['descrizione']) ?></textarea>
 
                 <label for="regione">Regione</label>
                 <select id="regione" name="regione" required>
                     <option value="">Seleziona Regione</option>
                     <?php foreach ($regioni as $r): ?>
-                        <option value="<?= $r['id'] ?>" <?= $segnalazione['regione'] == $r['id'] ? 'selected' : '' ?>><?= htmlspecialchars($r['nome']) ?></option>
+                        <option value="<?= $r['id'] ?>" <?= $segnalazione['regione']==$r['id']?'selected':'' ?>><?= htmlspecialchars($r['nome']) ?></option>
                     <?php endforeach; ?>
                 </select>
 
@@ -246,9 +306,10 @@ if ($result) {
                 <input type="number" id="civico" name="civico" value="<?= htmlspecialchars($segnalazione['civico']) ?>" required>
 
                 <label for="foto">Foto</label>
-                <input type="file" id="foto" name="foto" accept="image/*">
                 <?php if (!empty($segnalazione['foto'])): ?>
-                    <img src="..<?= htmlspecialchars($segnalazione['foto']) ?>" class="preview" alt="Anteprima Foto">
+                    <img src="../<?= htmlspecialchars($segnalazione['foto']) ?>" alt="Foto">
+                <?php else: ?>
+                    <div style="width:100px;height:100px;border-radius:50%;background:#ccc;"></div>
                 <?php endif; ?>
 
                 <button type="submit">Salva Modifiche</button>
@@ -262,7 +323,6 @@ if ($result) {
     <script>
         $(function() {
             const selProv = <?= json_encode($segnalazione['provincia']) ?>;
-
             function loadProvince(regId) {
                 $('#provincia').html('<option value="">Seleziona Provincia</option>');
                 if (!regId) return;
@@ -273,12 +333,9 @@ if ($result) {
                     });
                 });
             }
-            $('#regione').change(function() {
-                loadProvince(this.value);
-            });
+            $('#regione').change(function() { loadProvince(this.value); });
             loadProvince($('#regione').val());
         });
     </script>
 </body>
-
 </html>

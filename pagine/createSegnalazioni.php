@@ -5,6 +5,23 @@ if (!isset($_SESSION['username'])) {
     exit();
 }
 include '../database/conn.php';
+
+// Recupera i tipi di segnalazione dal database
+$tipiSegnalazione = [];
+
+$result = $conn->query("SHOW COLUMNS FROM `segnalazioni` LIKE 'tipo'");
+if ($result && $row = $result->fetch_assoc()) {
+    if (preg_match("/^enum\((.*)\)$/", $row['Type'], $matches) && !empty($matches[1])) {
+        // Rimuovo eventuali escape di apici interni
+        $lista = str_replace("\\'", "’", $matches[1]);
+        $tipiSegnalazione = str_getcsv($lista, ',', "'");
+    } else {
+        // fallback su array vuoto o log di errore
+        error_log("Enum 'tipo' non riconosciuto o vuoto in segnalazioni");
+    }
+} else {
+    error_log("Errore nella query SHOW COLUMNS: " . $conn->error);
+}
 ?>
 <!DOCTYPE html>
 <html lang="it">
@@ -12,10 +29,57 @@ include '../database/conn.php';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="icon" type="image/png" href="../assets/img/civicvoisLogo.png">
     <title>Nuova Segnalazione - Civicvois</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <?php include __DIR__ . '../header.php'; ?>
+
     <style>
+    header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: rgba(0,0,0,0.3);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+header .logout {
+  background: #2563eb;
+  color: #fff;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  transition: background 0.3s, transform 0.2s;
+}
+
+header .logout:hover {
+  background: #1d4ed8;
+  transform: translateY(-2px);
+}
+
+header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.logo {
+  border: none; /* rimuove qualsiasi bordo aggiuntivo */
+}
         /* Stili della pagina */
         body {
             font-family: 'Inter', sans-serif;
@@ -27,43 +91,13 @@ include '../database/conn.php';
             background: linear-gradient(135deg, #1e3a8a, #2563eb);
             color: #ffffff;
         }
-
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        header h1 {
-            margin: 0;
-            font-size: 1.8rem;
-        }
-
-        header nav a {
-            color: #ffffff;
-            text-decoration: none;
-            font-weight: bold;
-            margin-left: 15px;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background 0.3s, transform 0.2s;
-        }
-
-        header nav a:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
-
         .container {
             flex: 1;
             padding: 20px;
             display: flex;
             justify-content: center;
             align-items: center;
+            padding-bottom: 100px; /* Altezza del footer + margine extra */
         }
 
         .form-section {
@@ -129,46 +163,14 @@ include '../database/conn.php';
             background: #1d4ed8;
             transform: translateY(-3px);
         }
-
-        footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100%;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 15px 20px;
-            background: rgba(0, 0, 0, 0.2);
-            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.3);
-        }
-
-        footer a {
-            color: #ffffff;
-            text-decoration: none;
-            font-weight: bold;
-            background: #2563eb;
-            padding: 10px 15px;
-            border-radius: 8px;
-            transition: background 0.3s, transform 0.2s;
-        }
-
-        footer a:hover {
-            background: #1d4ed8;
-            transform: translateY(-3px);
-        }
+        footer{ position:fixed; bottom:0; left:0; width:92%; padding:1rem; background:rgba(0,0,0,0.3); box-shadow:0 -4px 10px rgba(0,0,0,0.3); display:flex; justify-content:space-around; gap:1rem; }
+        footer a{ flex:1; background:#2563eb;color:#fff;padding:0.75rem;border-radius:0.5rem;text-align:center;font-weight:600;transition:background 0.3s,transform 0.2s; }
+        footer a:hover{background:#1d4ed8;transform:translateY(-2px);}  
     </style>
 </head>
 
 <body>
-    <header>
-        <h1>Civicvois</h1>
-        <nav>
-            <a href="home.php">Home</a>
-            <a href="profilo.php">Profilo</a>
-            <a href="../autenticazione/paginaLogout.php">Logout</a>
-        </nav>
-    </header>
+
     <main class="container">
         <section class="form-section">
             <h2>Crea una segnalazione</h2>
@@ -190,21 +192,20 @@ include '../database/conn.php';
                 <input type="text" name="via" id="via" placeholder="Via" required disabled>
 
                 <label for="civico">Civico</label>
-                <input type="number" name="civico" id="civico" placeholder="Civico" required disabled min="0" max="9999">
+                <input type="number" name="civico" id="civico" placeholder="Civico" required disabled min="0"
+                    max="9999">
 
                 <label for="tipo">Tipo di Segnalazione</label>
                 <select name="tipo" id="tipo" required>
-                    <option value="">Tipo di segnalazione</option>
-                    <option value="cartello stradale: mancante">Cartello stradale: Mancante</option>
-                    <option value="cartello stradale: caduto">Cartello stradale: Caduto</option>
-                    <option value="cartello stradale: vandalizzato">Cartello stradale: Vandalizzato</option>
-                    <option value="strada: rotta">Strada: Rotta</option>
-                    <option value="strada: piena di buchi">Strada: Piena di buchi</option>
-                    <option value="animali: smarriti">Animali: Smarriti</option>
+                    <option value="">Seleziona Tipo</option>
+                    <?php foreach ($tipiSegnalazione as $tipo): ?>
+                        <option value="<?= htmlspecialchars($tipo) ?>"><?= htmlspecialchars($tipo) ?></option>
+                    <?php endforeach; ?>
                 </select>
 
                 <label for="descrizione">Descrizione</label>
-                <textarea name="descrizione" id="descrizione" rows="5" placeholder="Descrizione della segnalazione" required></textarea>
+                <textarea name="descrizione" id="descrizione" rows="5" placeholder="Descrizione della segnalazione"
+                    required></textarea>
 
                 <label for="foto">Foto</label>
                 <input type="file" name="foto" id="foto" accept="image/*">
@@ -218,45 +219,30 @@ include '../database/conn.php';
         <a href="profilo.php">Profilo</a>
     </footer>
     <script>
-        $(document).ready(function() {
-            // Carica le regioni
-            $.getJSON("../ajax/getRegioni.php", function(data) {
-                data.forEach(function(regione) {
-                    $("#regione").append(new Option(regione.nome, regione.id));
-                });
+            // Caricamento delle regioni
+            $.getJSON('../ajax/getRegioni.php', data => {
+                data.forEach(r => $('#regione').append(new Option(r.nome, r.id)));
+                $('#regione').prop('disabled', false);
             });
 
-            // Disabilita i campi inizialmente
-            $("#provincia").prop("disabled", true);
-            $("#comune").prop("disabled", true);
-            $("#via").prop("disabled", true);
-            $("#civico").prop("disabled", true);
-
-            // Carica le province in base alla regione selezionata
-            $("#regione").change(function() {
+            // Quando cambia la regione, carica le province
+            $('#regione').change(function() {
                 const regioneId = $(this).val();
-                $("#provincia").prop("disabled", !regioneId).empty().append(new Option("Seleziona Provincia", ""));
-                $("#comune").prop("disabled", true).val("");
-                $("#via").prop("disabled", true).val("");
-                $("#civico").prop("disabled", true).val("");
-
+                $('#provincia').empty().append('<option value="">Provincia</option>').prop('disabled', true);
+                $('#comune').prop('disabled', true).val(''); // Disabilita il comune
                 if (regioneId) {
-                    $.getJSON(`../ajax/getProvince.php?regione_id=${regioneId}`, function(data) {
-                        data.forEach(function(provincia) {
-                            $("#provincia").append(new Option(provincia.nome, provincia.id));
-                        });
+                    $.getJSON(`../ajax/getProvince.php?regione_id=${regioneId}`, data => {
+                        data.forEach(p => $('#provincia').append(new Option(p.nome, p.id)));
+                        $('#provincia').prop('disabled', false); // Abilita la provincia
                     });
                 }
             });
 
-            // Abilita i campi comune, via e civico solo dopo la selezione della provincia
-            $("#provincia").change(function() {
+            // Quando cambia la provincia, abilita il campo comune
+            $('#provincia').change(function() {
                 const provinciaId = $(this).val();
-                $("#comune").prop("disabled", !provinciaId).val("");
-                $("#via").prop("disabled", !provinciaId).val("");
-                $("#civico").prop("disabled", !provinciaId).val("");
+                $('#comune').prop('disabled', !provinciaId).val(''); // Abilita o disabilita il comune
             });
-        });
     </script>
 </body>
 
