@@ -211,7 +211,7 @@ async function init() {
   loadItalyLocations().then((loaded) => {
     if (!loaded) return;
     if (state.route === "auth" && state.authMode === "register") return renderAuthPage("register");
-    if (["new", "profile", "settings"].includes(state.route)) render();
+    if (["new", "profile"].includes(state.route)) render();
   }).catch(error => console.warn("Anagrafica territoriale non aggiornata", error));
 
   if (!DEMO_MODE) {
@@ -250,6 +250,8 @@ function setRoute(route) {
 
 function normalizeRoute(route) {
   if (["dashboard", "new", "profile", "admin", "settings"].includes(route) && !state.user) return "auth";
+  if (route === "settings") return "profile";
+  if (route === "admin" && state.profile?.role !== "admin") return "dashboard";
   return route || "landing";
 }
 
@@ -397,7 +399,7 @@ async function loadLikes() {
 
 function render() {
   if (!state.user && ["auth"].includes(state.route)) return renderAuthPage();
-  if (!state.user && ["dashboard", "new", "profile", "admin", "settings"].includes(state.route)) return renderAuthPage();
+  if (!state.user && ["dashboard", "new", "profile", "admin"].includes(state.route)) return renderAuthPage();
 
   switch (state.route) {
     case "auth":
@@ -409,9 +411,8 @@ function render() {
     case "profile":
       return renderApp("profile");
     case "admin":
+      if (state.profile?.role !== "admin") return setRoute("dashboard");
       return renderApp("admin");
-    case "settings":
-      return renderApp("settings");
     default:
       return renderLanding();
   }
@@ -758,7 +759,6 @@ function renderApp(active) {
           ${active === "new" ? newReportHtml() : ""}
           ${active === "profile" ? profileHtml() : ""}
           ${active === "admin" ? adminHtml() : ""}
-          ${active === "settings" ? settingsHtml() : ""}
         </main>
         ${mobileNavHtml(active)}
       </div>
@@ -1112,11 +1112,6 @@ function bindAppEvents(active) {
     bindReportActions();
   }
 
-  if (active === "settings") {
-    bindLocationControls($("#profile-form"));
-    bindAvatarUpload($("#profile-form"));
-    bindProfileForm();
-  }
 
   if (active === "admin") {
     bindAdminActions();
@@ -1868,13 +1863,18 @@ function getStats() {
 }
 
 function navHtml(active) {
+  const isAdmin = state.profile?.role === "admin";
+  const items = [
+    navItem("dashboard", "🏠", "Dashboard", active),
+    navItem("new", "+", "Nuova segnalazione", active, { plus: true }),
+    navItem("profile", profileNavIconHtml(), "Profilo", active, { htmlIcon: true })
+  ];
+
+  if (isAdmin) items.push(navItem("admin", "🛠️", "Admin", active));
+
   return `
     <nav class="side-nav" aria-label="Menu app">
-      ${navItem("dashboard", "🏠", "Dashboard", active)}
-      ${navItem("new", "➕", "Nuova", active)}
-      ${navItem("profile", "👤", "Profilo", active)}
-      ${navItem("admin", "🛠️", "Admin", active)}
-      ${navItem("settings", "⚙️", "Impost.", active)}
+      ${items.join("")}
     </nav>
   `;
 }
@@ -1883,8 +1883,22 @@ function mobileNavHtml(active) {
   return `<nav class="mobile-nav">${navHtml(active).replace('<nav class="side-nav" aria-label="Menu app">', '').replace('</nav>', '')}</nav>`;
 }
 
-function navItem(route, icon, label, active) {
-  return `<button class="side-link ${active === route ? "is-active" : ""}" data-route="${route}"><span class="nav-ico">${icon}</span><span>${label}</span></button>`;
+function profileNavIconHtml() {
+  const p = state.profile || {};
+  if (p.avatar_url) return `<img src="${escapeAttr(p.avatar_url)}" class="nav-avatar" alt="" />`;
+  const initials = (p.full_name || p.username || state.user?.email || "CV")
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(x => x[0]?.toUpperCase())
+    .join("") || "CV";
+  return `<span class="nav-avatar nav-avatar--fallback">${escapeHtml(initials)}</span>`;
+}
+
+function navItem(route, icon, label, active, options = {}) {
+  const iconClass = options.plus ? "nav-ico nav-ico-plus" : "nav-ico";
+  const iconHtml = options.htmlIcon ? icon : `<span class="${iconClass}">${icon}</span>`;
+  return `<button class="side-link ${active === route ? "is-active" : ""}" data-route="${route}" aria-label="${escapeAttr(label)}" title="${escapeAttr(label)}">${iconHtml}<span class="nav-label">${label}</span></button>`;
 }
 
 function brandHtml() {
