@@ -1,0 +1,10 @@
+CivicVois configurato per Supabase
+
+Project URL:
+https://zqvzpnaxsoxpljdzoijq.supabase.co
+
+Chiave usata nel frontend:
+Publishable key pubblica Supabase.
+
+IMPORTANTE:
+Non inserire mai la secret key nel codice del sito, in Netlify o in file pubblici.

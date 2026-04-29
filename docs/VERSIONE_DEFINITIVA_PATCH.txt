@@ -1,0 +1,11 @@
+CivicVois - versione definitiva patchata
+
+Correzioni principali:
+- Ripristinato client ufficiale supabase-js.
+- Rimossi wrapper fetch/header custom.
+- Rimossi PKCE forzato ed emailRedirectTo.
+- Aggiunto _headers anti-cache per Netlify.
+- Aggiunto supabase/privileges-patch.sql.
+- Aggiunti helper debug window.CV_DEBUG.
+
+Dopo il deploy, testare prima il dominio .netlify.app.
