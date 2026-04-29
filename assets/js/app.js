@@ -439,9 +439,10 @@ function renderLanding() {
               <button class="btn btn-primary" data-route="${state.user ? "new" : "auth"}">Crea una segnalazione</button>
               <button class="btn btn-ghost" data-route="${state.user ? "dashboard" : "auth"}">Entra nella dashboard</button>
             </div>
-            <div class="hero-stats">
+            <div class="hero-stats hero-stats--square" aria-label="Statistiche CivicVois">
               <div class="stat-card"><div class="stat-value">${stats.total}</div><div class="stat-label">segnalazioni</div></div>
               <div class="stat-card"><div class="stat-value">${stats.open}</div><div class="stat-label">aperte</div></div>
+              <div class="stat-card"><div class="stat-value">${stats.inProgress}</div><div class="stat-label">in carico</div></div>
               <div class="stat-card"><div class="stat-value">${stats.resolved}</div><div class="stat-label">risolte</div></div>
             </div>
           </div>
@@ -767,10 +768,7 @@ function dashboardHtml() {
 
     <section class="dashboard-grid">
       <div>
-        <div class="filters">
-          <div class="search-field">
-            <input class="input" id="filter-q" placeholder="Cerca per parola, via, comune..." value="${escapeAttr(state.filters.q)}" />
-          </div>
+        <div class="filters filters--dashboard">
           <select class="select" id="filter-comune">
             <option value="">Tutti i comuni</option>
             ${uniqueValues(state.reports, "comune").map(v => `<option ${state.filters.comune === v ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}
@@ -955,37 +953,56 @@ function adminHtml() {
     `;
   }
 
+  const stats = getStats();
+
   return `
     <div class="topbar">
       <div>
         <h1>Area admin</h1>
-        <p>Gestisci stati, priorità e qualità delle segnalazioni.</p>
+        <p>Gestisci le segnalazioni senza tabelle scomode o scroll orizzontali.</p>
       </div>
       <button class="btn btn-primary" data-route="new">+ Nuova</button>
     </div>
-    <section class="panel panel-pad">
-      <div class="table-wrap">
-        <table class="table">
-          <thead><tr><th>Segnalazione</th><th>Comune</th><th>Priorità</th><th>Stato</th><th>Like</th><th>Azioni</th></tr></thead>
-          <tbody>
-            ${state.reports.map(r => `
-              <tr>
-                <td><strong>${escapeHtml(r.titolo || r.tipo)}</strong><br><span style="color:var(--muted); font-size:.86rem;">${escapeHtml(formatDate(r.created_at))}</span></td>
-                <td>${escapeHtml(r.comune || "—")}</td>
-                <td>${priorityChip(r.priorita)}</td>
-                <td>
-                  <select class="select admin-status" data-id="${r.id}">
-                    ${STATUSES.map(s => `<option value="${s}" ${r.stato === s ? "selected" : ""}>${capitalize(s)}</option>`).join("")}
-                  </select>
-                </td>
-                <td>${Number(r.like_count || 0)}</td>
-                <td><button class="btn btn-danger btn-small delete-report" data-id="${r.id}">Elimina</button></td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
+
+    <section class="stats-grid stats-grid--dashboard admin-stats" aria-label="Statistiche amministratore">
+      <div class="kpi-card"><b>${stats.total}</b><span>Totali</span></div>
+      <div class="kpi-card"><b>${stats.open}</b><span>Aperte</span></div>
+      <div class="kpi-card"><b>${stats.inProgress}</b><span>In carico</span></div>
+      <div class="kpi-card"><b>${stats.resolved}</b><span>Risolte</span></div>
     </section>
+
+    <section class="admin-list" aria-label="Elenco segnalazioni admin">
+      ${state.reports.length ? state.reports.map(adminCardHtml).join("") : emptyHtml("Nessuna segnalazione", "Quando gli utenti pubblicano segnalazioni, le trovi qui.")}
+    </section>
+  `;
+}
+
+function adminCardHtml(r) {
+  return `
+    <article class="admin-card">
+      <div class="admin-card-main">
+        <div class="admin-card-icon">${categoryIcon(r.tipo)}</div>
+        <div class="admin-card-copy">
+          <div class="admin-card-label">${escapeHtml(capitalize(r.tipo || "Segnalazione"))}</div>
+          <h2>${escapeHtml(r.titolo || r.tipo || "Segnalazione")}</h2>
+          <div class="admin-card-meta">
+            <span>📍 ${escapeHtml(r.comune || "—")}</span>
+            <span>🕒 ${escapeHtml(formatDate(r.created_at))}</span>
+            <span>❤️ ${Number(r.like_count || 0)}</span>
+          </div>
+        </div>
+      </div>
+      <div class="admin-card-controls">
+        ${priorityChip(r.priorita)}
+        <label class="admin-status-wrap">
+          <span>Stato</span>
+          <select class="select admin-status" data-id="${r.id}">
+            ${STATUSES.map(s => `<option value="${s}" ${r.stato === s ? "selected" : ""}>${capitalize(s)}</option>`).join("")}
+          </select>
+        </label>
+        <button class="btn btn-danger btn-small delete-report" data-id="${r.id}">Elimina</button>
+      </div>
+    </article>
   `;
 }
 
@@ -1613,7 +1630,7 @@ function openReportDrawer(id) {
         <div class="report-meta">
           ${statusChip(report.stato)}
           ${priorityChip(report.priorita)}
-          <span class="chip">❤️ ${Number(report.like_count || 0)}</span>
+          <span class="chip like-count-chip" aria-label="Numero voti">❤️ <b>${Number(report.like_count || 0)}</b></span>
         </div>
         <div style="height:12px"></div>
         <h2>${escapeHtml(report.titolo || report.tipo)}</h2>
@@ -1627,7 +1644,7 @@ function openReportDrawer(id) {
           <div class="detail-box"><b>Coordinate</b><span>${report.lat && report.lng ? `${report.lat}, ${report.lng}` : "Non impostate"}</span></div>
         </div>
         <div class="report-actions">
-          <button class="btn btn-primary like-btn ${state.likes.has(report.id) ? "is-liked" : ""}" data-id="${report.id}">${state.likes.has(report.id) ? "❤️ Ti piace" : "🤍 Sostieni"}</button>
+          <button class="btn btn-primary like-btn ${state.likes.has(report.id) ? "is-liked" : ""}" data-id="${report.id}">${state.likes.has(report.id) ? "❤️ Ti piace" : "🤍 Vota"} <span class="btn-like-count">${Number(report.like_count || 0)}</span></button>
           <button class="btn btn-soft" data-route="new">Nuova segnalazione</button>
         </div>
       </div>
@@ -1703,7 +1720,7 @@ function reportCardHtml(report) {
             <div style="height:9px"></div>
             <h2 class="report-title">${escapeHtml(report.titolo || capitalize(report.tipo || "Segnalazione"))}</h2>
           </div>
-          <span class="chip">❤️ ${Number(report.like_count || 0)}</span>
+          <span class="chip like-count-chip" aria-label="Numero voti">❤️ <b>${Number(report.like_count || 0)}</b></span>
         </div>
         <p class="report-desc">${escapeHtml(report.descrizione || "")}</p>
         <div class="report-meta">
@@ -1713,7 +1730,7 @@ function reportCardHtml(report) {
         </div>
         <div class="report-actions">
           <button class="btn btn-small btn-primary open-detail" data-id="${report.id}">Dettagli</button>
-          <button class="btn btn-small btn-soft like-btn ${liked ? "is-liked" : ""}" data-id="${report.id}">${liked ? "❤️ Votata" : "🤍 Sostieni"}</button>
+          <button class="btn btn-small btn-soft like-btn ${liked ? "is-liked" : ""}" data-id="${report.id}">${liked ? "❤️ Votata" : "🤍 Vota"} <span class="btn-like-count">${Number(report.like_count || 0)}</span></button>
           ${(isMine || isAdmin) ? `<button class="btn btn-small btn-danger delete-own-report" data-id="${report.id}">Elimina</button>` : ""}
         </div>
       </div>

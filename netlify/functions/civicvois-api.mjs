@@ -352,7 +352,10 @@ async function recalcLikeCount(reportId) {
   if (!report) return;
   const { blobs } = await db.list({ prefix: "likes/" });
   let count = 0;
-  for (const blob of blobs) if (blob.key.endsWith(`/${reportId}`)) count += 1;
+  for (const blob of blobs) {
+    const like = await getJSON(db, blob.key);
+    if (String(like?.segnalazione_id || "") === String(reportId)) count += 1;
+  }
   report.like_count = count;
   report.updated_at = nowIso();
   await setJSON(db, rowKey("segnalazioni", reportId), report);
@@ -361,7 +364,10 @@ async function recalcLikeCount(reportId) {
 async function deleteLikesForReport(reportId) {
   const db = await dataStore();
   const { blobs } = await db.list({ prefix: "likes/" });
-  for (const blob of blobs) if (blob.key.endsWith(`/${reportId}`)) await db.delete(blob.key);
+  for (const blob of blobs) {
+    const like = await getJSON(db, blob.key);
+    if (String(like?.segnalazione_id || "") === String(reportId)) await db.delete(blob.key);
+  }
 }
 
 function applyFilters(rows, filters, inFilters) {

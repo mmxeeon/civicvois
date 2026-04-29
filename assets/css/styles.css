@@ -1565,3 +1565,176 @@ img {
     border-radius: 24px;
   }
 }
+
+
+/* CivicVois mobile/PWA polish 2026-04-29: safe area, admin cards, likes, compact filters */
+@supports (padding: env(safe-area-inset-top)) {
+  .site-header { padding-top: env(safe-area-inset-top); }
+  .mobile-topbar { padding-top: calc(10px + env(safe-area-inset-top)); }
+  .mobile-nav { bottom: max(8px, env(safe-area-inset-bottom)); }
+}
+
+.hero-stats.hero-stats--square {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 560px;
+}
+
+.hero-stats.hero-stats--square .stat-card {
+  min-height: 128px;
+  display: grid;
+  align-content: center;
+  border-radius: 26px;
+}
+
+.filters.filters--dashboard {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.like-count-chip {
+  min-width: 64px;
+  justify-content: center;
+  white-space: nowrap;
+  background: #f8fafc;
+}
+
+.like-count-chip b,
+.btn-like-count { font-weight: 950; }
+
+.btn-like-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.62);
+  color: inherit;
+}
+
+.admin-list { display: grid; gap: 14px; }
+
+.admin-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+  border-radius: 30px;
+  background: white;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+}
+
+.admin-card-main { display: flex; align-items: center; gap: 14px; min-width: 0; }
+
+.admin-card-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 22px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  background: linear-gradient(135deg, #ccfbf1, #e0f2fe);
+  font-size: 1.45rem;
+}
+
+.admin-card-copy { min-width: 0; }
+
+.admin-card-label {
+  color: var(--muted);
+  font-size: .74rem;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.admin-card h2 {
+  margin: 0;
+  line-height: 1.08;
+  letter-spacing: -.05em;
+  font-size: clamp(1.12rem, 2.4vw, 1.45rem);
+}
+
+.admin-card-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+  color: var(--muted);
+  font-weight: 750;
+  font-size: .88rem;
+}
+
+.admin-card-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-status-wrap { display: grid; gap: 5px; min-width: 142px; }
+
+.admin-status-wrap span {
+  color: var(--muted);
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-size: .68rem;
+}
+
+.map-panel,
+.leaflet-container,
+.leaflet-pane,
+.leaflet-control-container { z-index: 1 !important; }
+
+.mobile-nav { z-index: 9999 !important; }
+
+@media (max-width: 820px) {
+  .app-layout { padding-top: 0; }
+  .mobile-topbar { min-height: calc(66px + env(safe-area-inset-top)); }
+  .main { padding: 14px 13px calc(108px + env(safe-area-inset-bottom)); }
+  .filters.filters--dashboard { grid-template-columns: 1fr; gap: 8px; }
+  .admin-card { grid-template-columns: 1fr; gap: 14px; border-radius: 26px; padding: 16px; }
+  .admin-card-controls { justify-content: stretch; display: grid; grid-template-columns: 1fr; }
+  .admin-status-wrap { min-width: 0; }
+  .mobile-nav { left: 18px; right: 18px; min-height: 68px; padding: 6px; border-radius: 30px; }
+}
+
+@media (max-width: 520px) {
+  body { -webkit-text-size-adjust: 100%; }
+  .hero { padding-top: max(28px, env(safe-area-inset-top)); padding-bottom: 32px; }
+  .hero h1 { font-size: clamp(2.9rem, 16vw, 4.55rem); }
+  .hero-lead { font-size: .98rem; }
+  .hero-actions .btn { width: 100%; }
+  .hero-stats.hero-stats--square { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 24px; }
+  .hero-stats.hero-stats--square .stat-card { min-height: 112px; padding: 16px; }
+  .stat-value { font-size: 1.75rem; }
+  .stat-label { font-size: .86rem; }
+  .mobile-topbar { padding-left: 14px; padding-right: 14px; padding-bottom: 11px; }
+  .mobile-topbar .brand-logo { width: 46px; height: 46px; border-radius: 16px; }
+  .mobile-topbar .brand-name { font-size: 1rem; max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stats-grid.stats-grid--dashboard { gap: 10px; margin-bottom: 12px; }
+  .stats-grid.stats-grid--dashboard .kpi-card { min-height: 94px; padding: 14px 16px; border-radius: 22px; }
+  .stats-grid.stats-grid--dashboard .kpi-card b { font-size: 1.75rem; }
+  .stats-grid.stats-grid--dashboard .kpi-card span { font-size: .82rem; }
+  .input, .select, .textarea { min-height: 44px; border-radius: 16px; font-size: .97rem; }
+  .report-card { padding: 12px; gap: 12px; border-radius: 24px; }
+  .report-media { min-height: 176px; border-radius: 20px; }
+  .report-title { font-size: 1.05rem; }
+  .report-desc { font-size: .96rem; }
+  .chip { font-size: .78rem; padding: 8px 10px; }
+  .report-top { align-items: start; }
+  .report-top > .like-count-chip { margin-left: auto; flex: 0 0 auto; }
+  .report-actions { gap: 8px; }
+  .report-actions .btn-small { min-height: 40px; padding: 0 12px; font-size: .86rem; }
+  .panel, .kpi-card, .report-card, .admin-card { border-radius: 22px; }
+  .mobile-nav { left: 16px; right: 16px; bottom: max(6px, env(safe-area-inset-bottom)); min-height: 64px; border-radius: 28px; }
+  .mobile-nav .side-link { padding: 7px 3px; border-radius: 22px; font-size: .66rem; }
+  .mobile-nav .side-link .nav-ico { font-size: 1rem; }
+  .toast-stack { right: 12px; bottom: calc(86px + env(safe-area-inset-bottom)); width: calc(100% - 24px); }
+}
