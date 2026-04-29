@@ -11,6 +11,14 @@ exports.handler = async function handler(event) {
 
     if (event.httpMethod === "GET") {
       const qs = event.queryStringParameters || {};
+      if (qs.health === "1" || qs.kind === "health") {
+        return respond(200, {
+          ok: true,
+          service: "civicvois-api",
+          mode: "netlify-function-proxy",
+          timestamp: new Date().toISOString()
+        });
+      }
       if (qs.kind === "object") return await getStorageObject(qs);
       return respond(404, { error: { message: "Endpoint non trovato." } });
     }
