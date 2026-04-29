@@ -245,6 +245,13 @@ async function bootstrapAuth() {
 }
 
 async function refreshData() {
+  // Nella pagina di accesso/registrazione non serve leggere subito il feed.
+  // Prima appariva "fetch failed" appena aprivi #/auth, anche prima di cliccare.
+  if (!state.user && state.route === "auth") {
+    state.reports = [];
+    state.likes = new Set();
+    return;
+  }
   await Promise.all([loadReports(), loadLikes()]);
 }
 
@@ -327,7 +334,9 @@ async function loadReports() {
   } catch (error) {
     console.error("Errore lettura segnalazioni", error);
     state.reports = [];
-    toast(niceSupabaseError(error, "Non riesco a leggere le segnalazioni."), "error");
+    if (state.route !== "auth") {
+      toast(niceSupabaseError(error, "Non riesco a leggere le segnalazioni."), "error");
+    }
   }
 }
 
