@@ -25,6 +25,23 @@ const CATEGORIES = [
 const STATUSES = ["nuova", "verificata", "in carico", "risolta", "archiviata"];
 const PRIORITIES = ["bassa", "media", "alta", "urgente"];
 
+const ITALY_LOCATION_SOURCES = [
+  "https://cdn.jsdelivr.net/gh/matteocontrini/comuni-json@master/comuni.json",
+  "https://raw.githubusercontent.com/matteocontrini/comuni-json/master/comuni.json"
+];
+
+const FALLBACK_LOCATIONS = [
+  { nome: "Verano Brianza", provincia: { nome: "Monza e Brianza", sigla: "MB" }, regione: { nome: "Lombardia" } },
+  { nome: "Giussano", provincia: { nome: "Monza e Brianza", sigla: "MB" }, regione: { nome: "Lombardia" } },
+  { nome: "Seregno", provincia: { nome: "Monza e Brianza", sigla: "MB" }, regione: { nome: "Lombardia" } },
+  { nome: "Carate Brianza", provincia: { nome: "Monza e Brianza", sigla: "MB" }, regione: { nome: "Lombardia" } },
+  { nome: "Monza", provincia: { nome: "Monza e Brianza", sigla: "MB" }, regione: { nome: "Lombardia" } },
+  { nome: "Milano", provincia: { nome: "Milano", sigla: "MI" }, regione: { nome: "Lombardia" } },
+  { nome: "Como", provincia: { nome: "Como", sigla: "CO" }, regione: { nome: "Lombardia" } },
+  { nome: "Lecco", provincia: { nome: "Lecco", sigla: "LC" }, regione: { nome: "Lombardia" } },
+  { nome: "Roma", provincia: { nome: "Roma", sigla: "RM" }, regione: { nome: "Lazio" } }
+];
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 const app = $("#app");
@@ -171,6 +188,8 @@ const state = {
     stato: "",
     sort: "recenti"
   },
+  locationData: buildLocationData(readLocal("cv_italy_locations_raw", null) || FALLBACK_LOCATIONS),
+  locationDataSource: readLocal("cv_italy_locations_raw", null) ? "cache" : "fallback",
   map: null,
   markers: [],
   uploading: false
@@ -184,6 +203,9 @@ init();
 async function init() {
   installGlobalToastStack();
   bindHashRouter();
+  loadItalyLocations().then((loaded) => {
+    if (loaded && ["new", "profile", "settings"].includes(state.route)) render();
+  }).catch(error => console.warn("Anagrafica territoriale non aggiornata", error));
 
   if (!DEMO_MODE) {
     supabase.auth.onAuthStateChange(async (_event, session) => {
@@ -736,7 +758,7 @@ function dashboardHtml() {
 
     ${DEMO_MODE ? demoNoticeHtml() : ""}
 
-    <section class="stats-grid" aria-label="Statistiche">
+    <section class="stats-grid stats-grid--dashboard" aria-label="Statistiche">
       <div class="kpi-card"><b>${stats.total}</b><span>Totali</span></div>
       <div class="kpi-card"><b>${stats.open}</b><span>Aperte</span></div>
       <div class="kpi-card"><b>${stats.inProgress}</b><span>In carico</span></div>
@@ -819,21 +841,15 @@ function newReportHtml() {
           <label>Descrizione</label>
           <textarea class="textarea" name="descrizione" placeholder="Spiega cosa succede, perché è un problema e se è urgente." required minlength="12"></textarea>
         </div>
-        <div class="field">
-          <label>Regione</label>
-          <input class="input" name="regione" placeholder="Lombardia" />
-        </div>
-        <div class="field">
-          <label>Provincia</label>
-          <input class="input" name="provincia" placeholder="Monza e Brianza" />
-        </div>
-        <div class="field">
-          <label>Comune</label>
-          <input class="input" name="comune" placeholder="Verano Brianza" required />
-        </div>
+        ${locationFieldsHtml({ regione: "Lombardia", provincia: "Monza e Brianza", comune: "Verano Brianza" }, { required: true })}
         <div class="field">
           <label>Via</label>
-          <input class="input" name="via" placeholder="Via Roma" />
+          <div class="address-check-row">
+            <input class="input" name="via" id="via-input" placeholder="Via Roma" autocomplete="off" />
+            <button class="btn btn-soft btn-small" type="button" id="verify-address-btn">Verifica</button>
+          </div>
+          <input type="hidden" name="address_verified" id="address-verified" value="" />
+          <small class="field-hint" id="address-status">La via viene verificata con comune, provincia e regione prima della pubblicazione.</small>
         </div>
         <div class="field">
           <label>Civico</label>
@@ -900,17 +916,10 @@ function profileHtml() {
               <label>Bio</label>
               <textarea class="textarea" name="bio" placeholder="Racconta brevemente chi sei.">${escapeHtml(p.bio || "")}</textarea>
             </div>
-            <div class="field">
-              <label>Regione</label>
-              <input class="input" name="regione" value="${escapeAttr(p.regione || "")}" />
-            </div>
-            <div class="field">
-              <label>Provincia</label>
-              <input class="input" name="provincia" value="${escapeAttr(p.provincia || "")}" />
-            </div>
+            ${locationFieldsHtml(p, { required: false })}
             <div class="field span-2">
-              <label>Comune</label>
-              <input class="input" name="comune" value="${escapeAttr(p.comune || "")}" />
+              <label>Foto profilo</label>
+              <input class="input" name="avatar_url" value="${escapeAttr(p.avatar_url || "")}" placeholder="https://... oppure lascia vuoto" />
             </div>
             <div class="span-2" style="display:flex; justify-content:flex-end;"><button class="btn btn-primary" type="submit">Salva profilo</button></div>
           </form>
@@ -981,18 +990,53 @@ function adminHtml() {
 }
 
 function settingsHtml() {
+  const p = state.profile || {};
   return `
-    <div class="topbar"><div><h1>Impostazioni</h1><p>Configurazione tecnica e stato del backend.</p></div></div>
-    <section class="panel panel-pad">
-      <h2 class="panel-title">Stato progetto</h2>
-      <p class="panel-subtitle">Qui capisci subito se il sito sta usando dati reali o solo la demo locale.</p>
-      <div style="height:16px"></div>
-      <div class="detail-grid">
-        <div class="detail-box"><b>Backend</b><span>${DEMO_MODE ? "Demo locale" : "Netlify Blobs"}</span></div>
-        <div class="detail-box"><b>Hosting</b><span>Compatibile Netlify</span></div>
-        <div class="detail-box"><b>Auth</b><span>${DEMO_MODE ? "LocalStorage" : "Netlify Function"}</span></div>
+    <div class="topbar"><div><h1>Impostazioni</h1><p>Modifica informazioni personali e preferenze del tuo profilo.</p></div></div>
+    <section class="dashboard-grid settings-grid">
+      <div class="panel">
+        <div class="profile-cover"></div>
+        <div class="profile-head">
+          ${avatarHtml(p, "profile-avatar")}
+          <div>
+            <h2>${escapeHtml(p.full_name || "Utente CivicVois")}</h2>
+            <p>@${escapeHtml(p.username || "utente")} · ${escapeHtml(p.comune || "Comune non impostato")}</p>
+          </div>
+        </div>
+        <div class="panel-pad" style="padding-top:0;">
+          <form id="profile-form" class="form-grid">
+            <div class="field">
+              <label>Nome completo</label>
+              <input class="input" name="full_name" value="${escapeAttr(p.full_name || "")}" required />
+            </div>
+            <div class="field">
+              <label>Username</label>
+              <input class="input" name="username" value="${escapeAttr(p.username || "")}" required />
+            </div>
+            <div class="field span-2">
+              <label>Bio</label>
+              <textarea class="textarea" name="bio" placeholder="Racconta brevemente chi sei.">${escapeHtml(p.bio || "")}</textarea>
+            </div>
+            ${locationFieldsHtml(p, { required: false })}
+            <div class="field span-2">
+              <label>Foto profilo</label>
+              <input class="input" name="avatar_url" value="${escapeAttr(p.avatar_url || "")}" placeholder="https://... oppure lascia vuoto" />
+            </div>
+            <div class="span-2" style="display:flex; justify-content:flex-end;"><button class="btn btn-primary" type="submit">Salva impostazioni</button></div>
+          </form>
+        </div>
       </div>
-      ${DEMO_MODE ? demoNoticeHtml() : `<div class="notice" style="background:var(--success-soft); color:var(--success); border-color:#bbf7d0;"><strong>Backend Netlify collegato</strong>Il sito è pronto a salvare utenti, segnalazioni, like e immagini online.</div>`}
+      <aside class="panel panel-pad">
+        <h2 class="panel-title">Stato progetto</h2>
+        <p class="panel-subtitle">Controlli tecnici rapidi senza occupare la navbar.</p>
+        <div style="height:16px"></div>
+        <div class="detail-grid">
+          <div class="detail-box"><b>Backend</b><span>${DEMO_MODE ? "Demo locale" : "Netlify Blobs"}</span></div>
+          <div class="detail-box"><b>Hosting</b><span>Compatibile Netlify</span></div>
+          <div class="detail-box"><b>Territori</b><span>${escapeHtml(state.locationDataSource === "remote" ? "Anagrafica comuni caricata" : state.locationDataSource === "cache" ? "Anagrafica comuni da cache" : "Fallback locale")}</span></div>
+        </div>
+        ${DEMO_MODE ? demoNoticeHtml() : `<div class="notice" style="background:var(--success-soft); color:var(--success); border-color:#bbf7d0;"><strong>Backend Netlify collegato</strong>Utenti, segnalazioni, like e immagini vengono salvati online.</div>`}
+      </aside>
     </section>
   `;
 }
@@ -1011,8 +1055,14 @@ function bindAppEvents(active) {
   }
 
   if (active === "profile") {
+    bindLocationControls($("#profile-form"));
     bindProfileForm();
     bindReportActions();
+  }
+
+  if (active === "settings") {
+    bindLocationControls($("#profile-form"));
+    bindProfileForm();
   }
 
   if (active === "admin") {
@@ -1063,15 +1113,217 @@ function bindReportActions() {
   });
 }
 
+function locationFieldsHtml(values = {}, options = {}) {
+  const required = options.required !== false;
+  const regione = cleanLocationName(values.regione || "");
+  const provincia = cleanLocationName(values.provincia || "");
+  const comune = cleanLocationName(values.comune || "");
+  const province = regione ? getProvincesForRegion(regione) : [];
+  const comuni = regione && provincia ? getComuniForProvince(regione, provincia) : [];
+  return `
+    <div class="field">
+      <label>Regione</label>
+      <select class="select" name="regione" data-location-region ${required ? "required" : ""}>
+        ${optionHtml("", "Seleziona regione", regione)}
+        ${getRegions().map(r => optionHtml(r, r, regione)).join("")}
+      </select>
+    </div>
+    <div class="field">
+      <label>Provincia</label>
+      <select class="select" name="provincia" data-location-province ${required ? "required" : ""} ${regione ? "" : "disabled"}>
+        ${optionHtml("", regione ? "Seleziona provincia" : "Prima scegli regione", provincia)}
+        ${province.map(p => optionHtml(p, p, provincia)).join("")}
+      </select>
+    </div>
+    <div class="field">
+      <label>Comune</label>
+      <select class="select" name="comune" data-location-comune ${required ? "required" : ""} ${regione && provincia ? "" : "disabled"}>
+        ${optionHtml("", provincia ? "Seleziona comune" : "Prima scegli provincia", comune)}
+        ${comuni.map(c => optionHtml(c, c, comune)).join("")}
+      </select>
+      <small class="field-hint">Regione, provincia e comune sono vincolati tra loro per evitare doppioni e refusi.</small>
+    </div>`;
+}
+
+function bindLocationControls(root = document) {
+  if (!root) return;
+  const regione = root.querySelector("[data-location-region]");
+  const provincia = root.querySelector("[data-location-province]");
+  const comune = root.querySelector("[data-location-comune]");
+  if (!regione || !provincia || !comune) return;
+  const renderProvince = (keep = "") => {
+    const selectedRegion = regione.value;
+    const list = selectedRegion ? getProvincesForRegion(selectedRegion) : [];
+    provincia.disabled = !selectedRegion;
+    provincia.innerHTML = `${optionHtml("", selectedRegion ? "Seleziona provincia" : "Prima scegli regione", keep)}${list.map(p => optionHtml(p, p, keep)).join("")}`;
+    if (keep && list.includes(keep)) provincia.value = keep;
+  };
+  const renderComuni = (keep = "") => {
+    const selectedRegion = regione.value;
+    const selectedProvince = provincia.value;
+    const list = selectedRegion && selectedProvince ? getComuniForProvince(selectedRegion, selectedProvince) : [];
+    comune.disabled = !(selectedRegion && selectedProvince);
+    comune.innerHTML = `${optionHtml("", selectedProvince ? "Seleziona comune" : "Prima scegli provincia", keep)}${list.map(c => optionHtml(c, c, keep)).join("")}`;
+    if (keep && list.includes(keep)) comune.value = keep;
+  };
+  regione.addEventListener("change", () => { renderProvince(); renderComuni(); resetAddressVerification(root); });
+  provincia.addEventListener("change", () => { renderComuni(); resetAddressVerification(root); });
+  comune.addEventListener("change", () => resetAddressVerification(root));
+}
+
+function bindAddressVerification(form) {
+  if (!form) return;
+  const via = form.querySelector("#via-input");
+  const civico = form.querySelector("[name='civico']");
+  [via, civico].filter(Boolean).forEach(el => el.addEventListener("input", () => resetAddressVerification(form)));
+  form.querySelector("#verify-address-btn")?.addEventListener("click", async () => {
+    const result = await verifyAddressFromForm(form);
+    toast(result.message, result.ok ? "success" : "error");
+  });
+}
+
+function resetAddressVerification(root = document) {
+  const hidden = root.querySelector?.("#address-verified");
+  const status = root.querySelector?.("#address-status");
+  if (hidden) hidden.value = "";
+  if (status) {
+    status.textContent = "La via viene verificata con comune, provincia e regione prima della pubblicazione.";
+    status.classList.remove("is-ok", "is-error");
+  }
+}
+
+async function verifyAddressFromForm(form, { silent = false } = {}) {
+  const formData = new FormData(form);
+  const location = validateLocationSelection(formData);
+  const status = form.querySelector("#address-status");
+  const hidden = form.querySelector("#address-verified");
+  if (!location.ok) return { ok: false, message: location.message };
+  const via = clean(formData.get("via"));
+  const civico = clean(formData.get("civico"));
+  if (!via) return { ok: true, message: "Via non inserita: la segnalazione userà solo il comune." };
+  if (status && !silent) {
+    status.textContent = "Verifico l'indirizzo...";
+    status.classList.remove("is-ok", "is-error");
+  }
+  try {
+    const query = [via, civico, location.comune, location.provincia, location.regione, "Italia"].filter(Boolean).join(", ");
+    const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&countrycodes=it&q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, { headers: { "Accept": "application/json", "Accept-Language": "it" } });
+    if (!res.ok) throw new Error("Servizio indirizzi non disponibile.");
+    const [place] = await res.json();
+    const display = normalizeLocationKey(place?.display_name || "");
+    const comuneKey = normalizeLocationKey(location.comune);
+    const viaToken = normalizeLocationKey(via).split(" ").filter(Boolean).find(x => x.length > 2) || "";
+    const ok = Boolean(place && display.includes(comuneKey) && (!viaToken || display.includes(viaToken)));
+    if (!ok) {
+      if (hidden) hidden.value = "";
+      if (status) { status.textContent = "Via non verificata per il comune selezionato."; status.classList.add("is-error"); }
+      return { ok: false, message: "Via non verificata: controlla comune, via o usa il GPS." };
+    }
+    const lat = Number(place.lat);
+    const lng = Number(place.lon);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      const coord = form.querySelector("#coordinate-input");
+      if (coord && !coord.value) coord.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    }
+    if (hidden) hidden.value = "1";
+    if (status) { status.textContent = "Via verificata correttamente."; status.classList.remove("is-error"); status.classList.add("is-ok"); }
+    return { ok: true, message: "Via verificata correttamente.", lat, lng };
+  } catch (error) {
+    console.warn(error);
+    if (hidden) hidden.value = "";
+    if (status) { status.textContent = "Non riesco a verificare la via adesso."; status.classList.add("is-error"); }
+    return { ok: false, message: "Verifica via non riuscita: riprova o usa GPS." };
+  }
+}
+
+function validateLocationSelection(formData, { allowEmpty = false } = {}) {
+  const regione = cleanLocationName(formData.get("regione"));
+  const provincia = cleanLocationName(formData.get("provincia"));
+  const comune = cleanLocationName(formData.get("comune"));
+  if (allowEmpty && !regione && !provincia && !comune) return { ok: true, regione: "", provincia: "", comune: "" };
+  const canonicalRegion = findCanonical(getRegions(), regione);
+  if (!canonicalRegion) return { ok: false, message: "Seleziona una regione valida dall'elenco." };
+  const canonicalProvince = findCanonical(getProvincesForRegion(canonicalRegion), provincia);
+  if (!canonicalProvince) return { ok: false, message: "Seleziona una provincia valida per la regione scelta." };
+  const canonicalComune = findCanonical(getComuniForProvince(canonicalRegion, canonicalProvince), comune);
+  if (!canonicalComune) return { ok: false, message: "Seleziona un comune valido per la provincia scelta." };
+  return { ok: true, regione: canonicalRegion, provincia: canonicalProvince, comune: canonicalComune };
+}
+
+function optionHtml(value, label, selected = "") {
+  return `<option value="${escapeAttr(value)}" ${value && value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+}
+
+async function loadItalyLocations() {
+  for (const source of ITALY_LOCATION_SOURCES) {
+    try {
+      const res = await fetch(source, { cache: "force-cache" });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!Array.isArray(data) || data.length < 1000) continue;
+      state.locationData = buildLocationData(data);
+      state.locationDataSource = "remote";
+      writeLocal("cv_italy_locations_raw", data);
+      return true;
+    } catch (error) {
+      console.warn("Fonte comuni non disponibile", source, error);
+    }
+  }
+  return false;
+}
+
+function buildLocationData(rows) {
+  const regions = {};
+  for (const row of rows || []) {
+    const regione = cleanLocationName(row?.regione?.nome || row?.regione || row?.regione_nome);
+    const provincia = cleanLocationName(row?.provincia?.nome || row?.provincia || row?.provincia_nome);
+    const comune = cleanLocationName(row?.nome || row?.comune || row?.comune_nome);
+    const sigla = cleanLocationName(row?.sigla || row?.provincia?.sigla || "");
+    if (!regione || !provincia || !comune) continue;
+    regions[regione] ||= { provinces: {} };
+    regions[regione].provinces[provincia] ||= { sigla, comuni: [] };
+    if (!regions[regione].provinces[provincia].comuni.includes(comune)) regions[regione].provinces[provincia].comuni.push(comune);
+  }
+  for (const region of Object.values(regions)) for (const province of Object.values(region.provinces)) province.comuni.sort((a, b) => a.localeCompare(b));
+  return { regions };
+}
+
+function getRegions() { return Object.keys(state.locationData?.regions || {}).sort((a, b) => a.localeCompare(b)); }
+function getProvincesForRegion(region) {
+  const canonical = findCanonical(getRegions(), region);
+  if (!canonical) return [];
+  return Object.keys(state.locationData.regions[canonical]?.provinces || {}).sort((a, b) => a.localeCompare(b));
+}
+function getComuniForProvince(region, province) {
+  const canonicalRegion = findCanonical(getRegions(), region);
+  if (!canonicalRegion) return [];
+  const canonicalProvince = findCanonical(getProvincesForRegion(canonicalRegion), province);
+  if (!canonicalProvince) return [];
+  return [...(state.locationData.regions[canonicalRegion].provinces[canonicalProvince]?.comuni || [])];
+}
+function findCanonical(list, value) {
+  const key = normalizeLocationKey(value);
+  return list.find(item => normalizeLocationKey(item) === key) || "";
+}
+function cleanLocationName(value) { return String(value || "").replace(/\s+/g, " ").trim(); }
+function normalizeLocationKey(value) {
+  return cleanLocationName(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[’']/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 function bindNewReportForm() {
+  const form = $("#report-form");
+  bindLocationControls(form);
+  bindAddressVerification(form);
+
   const input = $("#photo-input");
   input?.addEventListener("change", () => previewPhoto(input));
 
   $("#geo-btn")?.addEventListener("click", useGeolocation);
 
-  $("#report-form")?.addEventListener("submit", async (event) => {
+  form?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await createReport(new FormData(event.currentTarget));
+    await createReport(event.currentTarget);
   });
 }
 
@@ -1126,9 +1378,7 @@ async function useGeolocation() {
       const res = await fetch(url, { headers: { "Accept": "application/json" } });
       const json = await res.json();
       const address = json.address || {};
-      setInputValue("[name='comune']", address.town || address.city || address.village || "");
-      setInputValue("[name='provincia']", address.county || "");
-      setInputValue("[name='regione']", address.state || "");
+      setLocationFromAddress(address);
       setInputValue("[name='via']", address.road || "");
       setInputValue("[name='civico']", address.house_number || "");
     } catch (error) {
@@ -1139,16 +1389,40 @@ async function useGeolocation() {
   }, { enableHighAccuracy: true, timeout: 9000 });
 }
 
+function setLocationFromAddress(address = {}) {
+  const regionName = address.state || address.region || "";
+  const provinceName = address.county || address.state_district || "";
+  const comuneName = address.town || address.city || address.village || address.municipality || "";
+  const regionSelect = $("[data-location-region]");
+  const provinceSelect = $("[data-location-province]");
+  const comuneSelect = $("[data-location-comune]");
+  const canonicalRegion = findCanonical(getRegions(), regionName);
+  if (!canonicalRegion || !regionSelect) return;
+  regionSelect.value = canonicalRegion;
+  regionSelect.dispatchEvent(new Event("change"));
+  const canonicalProvince = findCanonical(getProvincesForRegion(canonicalRegion), provinceName);
+  if (canonicalProvince && provinceSelect) {
+    provinceSelect.value = canonicalProvince;
+    provinceSelect.dispatchEvent(new Event("change"));
+  }
+  const canonicalComune = findCanonical(getComuniForProvince(canonicalRegion, canonicalProvince), comuneName);
+  if (canonicalComune && comuneSelect) comuneSelect.value = canonicalComune;
+}
+
 function setInputValue(selector, value) {
   if (!value) return;
   const el = $(selector);
   if (el && !el.value) el.value = value;
 }
 
-async function createReport(formData) {
+async function createReport(form) {
   if (!state.user) return setRoute("auth");
 
-  const coords = parseCoords(String(formData.get("coordinate") || ""));
+  const formData = form instanceof FormData ? form : new FormData(form);
+  const location = validateLocationSelection(formData);
+  if (!location.ok) return toast(location.message, "error");
+
+  let coords = parseCoords(String(formData.get("coordinate") || ""));
   const photoFile = formData.get("photo");
 
   const payload = {
@@ -1158,9 +1432,9 @@ async function createReport(formData) {
     descrizione: clean(formData.get("descrizione")),
     priorita: clean(formData.get("priorita")) || "media",
     stato: "nuova",
-    regione: clean(formData.get("regione")),
-    provincia: clean(formData.get("provincia")),
-    comune: clean(formData.get("comune")),
+    regione: location.regione,
+    provincia: location.provincia,
+    comune: location.comune,
     via: clean(formData.get("via")),
     civico: clean(formData.get("civico")),
     lat: coords?.lat || null,
@@ -1171,6 +1445,18 @@ async function createReport(formData) {
 
   if (!payload.titolo || !payload.tipo || !payload.descrizione || !payload.comune) {
     return toast("Titolo, categoria, descrizione e comune sono obbligatori.", "error");
+  }
+
+  if (payload.via && String(formData.get("address_verified") || "") !== "1") {
+    const verified = await verifyAddressFromForm(form, { silent: true });
+    if (!verified.ok) {
+      return toast(verified.message || "Via non verificata: controlla l'indirizzo o usa il GPS.", "error");
+    }
+    if (!coords && verified.lat && verified.lng) {
+      coords = { lat: verified.lat, lng: verified.lng };
+      payload.lat = verified.lat;
+      payload.lng = verified.lng;
+    }
   }
 
   try {
@@ -1219,13 +1505,17 @@ function fileToDataUrl(file) {
 }
 
 async function updateProfile(formData) {
+  const location = validateLocationSelection(formData, { allowEmpty: true });
+  if (!location.ok) return toast(location.message, "error");
+
   const payload = {
     full_name: clean(formData.get("full_name")),
     username: clean(formData.get("username")).toLowerCase(),
     bio: clean(formData.get("bio")),
-    regione: clean(formData.get("regione")),
-    provincia: clean(formData.get("provincia")),
-    comune: clean(formData.get("comune")),
+    regione: location.regione,
+    provincia: location.provincia,
+    comune: location.comune,
+    avatar_url: clean(formData.get("avatar_url")),
     updated_at: new Date().toISOString()
   };
 
@@ -1483,7 +1773,7 @@ function navHtml(active) {
       ${navItem("new", "➕", "Nuova", active)}
       ${navItem("profile", "👤", "Profilo", active)}
       ${navItem("admin", "🛠️", "Admin", active)}
-      ${navItem("settings", "⚙️", "Setup", active)}
+      ${navItem("settings", "⚙️", "Impost.", active)}
     </nav>
   `;
 }
