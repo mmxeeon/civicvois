@@ -99,7 +99,11 @@ async function handleAuth(body) {
       user_metadata: {
         full_name: clean(data.full_name) || clean(data.username) || email.split("@")[0],
         username: cleanUsername(data.username || email.split("@")[0]),
-        comune: clean(data.comune || "")
+        regione: clean(data.regione || ""),
+        provincia: clean(data.provincia || ""),
+        comune: clean(data.comune || ""),
+        bio: clean(data.bio || ""),
+        avatar_url: clean(data.avatar_url || "")
       },
       created_at: now,
       updated_at: now
@@ -111,11 +115,11 @@ async function handleAuth(body) {
       email,
       username: user.user_metadata.username,
       full_name: user.user_metadata.full_name,
-      comune: user.user_metadata.comune,
-      provincia: "",
-      regione: "",
-      bio: "",
-      avatar_url: "",
+      regione: user.user_metadata.regione || "",
+      provincia: user.user_metadata.provincia || "",
+      comune: user.user_metadata.comune || "",
+      bio: user.user_metadata.bio || "",
+      avatar_url: user.user_metadata.avatar_url || "",
       role,
       created_at: now,
       updated_at: now
@@ -137,7 +141,11 @@ async function handleAuth(body) {
       user_metadata: {
         full_name: profile?.full_name || record.email.split("@")[0],
         username: profile?.username || record.email.split("@")[0],
-        comune: profile?.comune || ""
+        regione: profile?.regione || "",
+        provincia: profile?.provincia || "",
+        comune: profile?.comune || "",
+        bio: profile?.bio || "",
+        avatar_url: profile?.avatar_url || ""
       },
       created_at: record.created_at,
       updated_at: nowIso()
@@ -214,7 +222,11 @@ async function updateRows(table, body, user) {
   const saved = [];
   for (const existing of rows) {
     await assertCanModify(table, existing, user);
-    const row = normalizeRow(table, { ...existing, ...(body.payload || {}) }, user, false);
+    const payload = body.payload || {};
+    if (table === "segnalazioni" && (Object.prototype.hasOwnProperty.call(payload, "stato") || Object.prototype.hasOwnProperty.call(payload, "priorita")) && !(await isAdmin(user.id))) {
+      throw httpError(403, "Solo un amministratore può modificare stato o priorità della segnalazione.");
+    }
+    const row = normalizeRow(table, { ...existing, ...payload }, user, false);
     await saveRow(table, row);
     saved.push(row);
   }
@@ -298,6 +310,11 @@ function normalizeRow(table, row, user, isNew) {
     row.email = normalizeEmail(row.email || user.email);
     row.username = cleanUsername(row.username || row.email.split("@")[0]);
     row.full_name = clean(row.full_name || row.username);
+    row.bio = clean(row.bio || "");
+    row.regione = clean(row.regione || "");
+    row.provincia = clean(row.provincia || "");
+    row.comune = clean(row.comune || "");
+    row.avatar_url = clean(row.avatar_url || "");
     row.role = row.role || "user";
     row.updated_at = now;
     if (isNew) row.created_at = row.created_at || now;
@@ -310,6 +327,14 @@ function normalizeRow(table, row, user, isNew) {
     row.titolo = clean(row.titolo);
     row.tipo = clean(row.tipo);
     row.descrizione = clean(row.descrizione);
+    row.regione = clean(row.regione || "");
+    row.provincia = clean(row.provincia || "");
+    row.comune = clean(row.comune || "");
+    row.via = clean(row.via || "");
+    row.civico = clean(row.civico || "");
+    row.lat = row.lat === "" ? null : row.lat;
+    row.lng = row.lng === "" ? null : row.lng;
+    row.photo_url = clean(row.photo_url || "");
     row.priorita = clean(row.priorita || "media");
     row.stato = clean(row.stato || "nuova");
     row.like_count = Number(row.like_count || 0);

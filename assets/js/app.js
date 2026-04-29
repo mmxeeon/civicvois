@@ -132,7 +132,11 @@ async function ensureProfileFromAuth(user, extra = {}) {
     email: user.email || extra.email || null,
     username: fallbackUsername,
     full_name: clean(extra.full_name || metadata.full_name || fallbackUsername),
-    comune: clean(extra.comune || metadata.comune || "")
+    regione: clean(extra.regione || metadata.regione || ""),
+    provincia: clean(extra.provincia || metadata.provincia || ""),
+    comune: clean(extra.comune || metadata.comune || ""),
+    bio: clean(extra.bio || metadata.bio || ""),
+    avatar_url: clean(extra.avatar_url || metadata.avatar_url || "")
   };
 
   const { error } = await supabase
@@ -176,6 +180,7 @@ function niceBackendError(error, fallback = "Operazione non riuscita.") {
 
 const state = {
   route: "landing",
+  authMode: "login",
   session: null,
   user: null,
   profile: null,
@@ -204,7 +209,9 @@ async function init() {
   installGlobalToastStack();
   bindHashRouter();
   loadItalyLocations().then((loaded) => {
-    if (loaded && ["new", "profile", "settings"].includes(state.route)) render();
+    if (!loaded) return;
+    if (state.route === "auth" && state.authMode === "register") return renderAuthPage("register");
+    if (["new", "profile", "settings"].includes(state.route)) render();
   }).catch(error => console.warn("Anagrafica territoriale non aggiornata", error));
 
   if (!DEMO_MODE) {
@@ -338,7 +345,7 @@ async function loadReports() {
     if (userIds.length) {
       const { data: profiles, error: profileError } = await withRetry(() => supabase
         .from("profiles")
-        .select("id,username,full_name,avatar_url,comune")
+        .select("id,username,full_name,avatar_url,regione,provincia,comune,bio")
         .in("id", userIds)
       );
 
@@ -499,7 +506,8 @@ function renderLanding() {
   bindRouteButtons();
 }
 
-function renderAuthPage(mode = "login") {
+function renderAuthPage(mode = state.authMode || "login") {
+  state.authMode = mode;
   app.innerHTML = `
     <main class="auth-page">
       <section class="auth-copy">
@@ -523,6 +531,10 @@ function renderAuthPage(mode = "login") {
   });
 
   const form = $("#auth-form");
+  if (mode === "register") {
+    bindLocationControls(form);
+    bindAvatarUpload(form);
+  }
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const action = form.dataset.action;
@@ -567,15 +579,19 @@ function registerFormHtml() {
         <label>Password</label>
         <input class="input" name="password" type="password" autocomplete="new-password" placeholder="Minimo 6 caratteri" required minlength="6" />
       </div>
-      <div class="field">
-        <label>Comune</label>
-        <input class="input" name="comune" type="text" placeholder="Verano Brianza" />
+      ${locationFieldsHtml({}, { required: true })}
+      <div class="field span-2">
+        <label>Bio</label>
+        <textarea class="textarea" name="bio" placeholder="Racconta brevemente chi sei o il tuo legame col territorio."></textarea>
       </div>
-      <button class="btn btn-primary" type="submit">Crea account</button>
+      <div class="field span-2">
+        <label>Foto profilo</label>
+        ${avatarUploadHtml({}, "register")}
+      </div>
+      <button class="btn btn-primary span-2" type="submit">Crea account</button>
     </form>
   `;
 }
-
 document.addEventListener("click", async (event) => {
   const fast = event.target.closest("#demo-fast-login");
   if (fast) {
@@ -634,29 +650,38 @@ async function handleLogin(formData) {
 }
 
 async function handleRegister(formData) {
+  const location = validateLocationSelection(formData);
+  if (!location.ok) return toast(location.message, "error");
+
+  const avatarFile = formData.get("avatar_file");
   const payload = {
     full_name: String(formData.get("full_name") || "").trim(),
     username: String(formData.get("username") || "").trim().toLowerCase(),
     email: String(formData.get("email") || "").trim().toLowerCase(),
     password: String(formData.get("password") || ""),
-    comune: String(formData.get("comune") || "").trim()
+    regione: location.regione,
+    provincia: location.provincia,
+    comune: location.comune,
+    bio: clean(formData.get("bio")),
+    avatar_url: ""
   };
 
   if (!payload.full_name || !payload.username || !payload.email || payload.password.length < 6) {
     return toast("Compila correttamente tutti i campi obbligatori.", "error");
   }
 
-  if (DEMO_MODE) {
-    const user = demo.ensureUser(payload);
-    state.user = user;
-    state.profile = demo.getProfile(user.id);
-    writeLocal("cv_demo_user", user);
-    await refreshData();
-    toast("Account demo creato.", "success");
-    return setRoute("dashboard");
-  }
-
   try {
+    if (DEMO_MODE) {
+      if (avatarFile instanceof File && avatarFile.size > 0) payload.avatar_url = await uploadPhoto(avatarFile, "avatars");
+      const user = demo.ensureUser(payload);
+      state.user = user;
+      state.profile = demo.getProfile(user.id);
+      writeLocal("cv_demo_user", user);
+      await refreshData();
+      toast("Account demo creato.", "success");
+      return setRoute("dashboard");
+    }
+
     const { data, error } = await withRetry(() => supabase.auth.signUp({
       email: payload.email,
       password: payload.password,
@@ -664,7 +689,10 @@ async function handleRegister(formData) {
         data: {
           full_name: payload.full_name,
           username: payload.username,
-          comune: payload.comune
+          regione: payload.regione,
+          provincia: payload.provincia,
+          comune: payload.comune,
+          bio: payload.bio
         }
       }
     }));
@@ -674,7 +702,9 @@ async function handleRegister(formData) {
     if (data.user && data.session) {
       state.session = data.session;
       state.user = data.user;
-      await ensureProfileFromAuth(data.user, payload);
+      let avatar_url = "";
+      if (avatarFile instanceof File && avatarFile.size > 0) avatar_url = await uploadPhoto(avatarFile, "avatars");
+      await ensureProfileFromAuth(data.user, { ...payload, avatar_url });
       await loadProfile();
       await refreshData();
       toast("Registrazione completata.", "success");
@@ -688,7 +718,6 @@ async function handleRegister(formData) {
     toast(niceBackendError(error, "Registrazione non riuscita."), "error");
   }
 }
-
 async function handleLogout() {
   if (DEMO_MODE) {
     localStorage.removeItem("cv_demo_user");
@@ -917,7 +946,7 @@ function profileHtml() {
             ${locationFieldsHtml(p, { required: false })}
             <div class="field span-2">
               <label>Foto profilo</label>
-              <input class="input" name="avatar_url" value="${escapeAttr(p.avatar_url || "")}" placeholder="https://... oppure lascia vuoto" />
+              ${avatarUploadHtml(p, "profile")}
             </div>
             <div class="span-2" style="display:flex; justify-content:flex-end;"><button class="btn btn-primary" type="submit">Salva profilo</button></div>
           </form>
@@ -986,14 +1015,20 @@ function adminCardHtml(r) {
           <div class="admin-card-label">${escapeHtml(capitalize(r.tipo || "Segnalazione"))}</div>
           <h2>${escapeHtml(r.titolo || r.tipo || "Segnalazione")}</h2>
           <div class="admin-card-meta">
-            <span>📍 ${escapeHtml(r.comune || "—")}</span>
+            <span>📍 ${escapeHtml([r.comune, r.provincia, r.regione].filter(Boolean).join(" · ") || "—")}</span>
+            <span>👤 ${escapeHtml(authorName(r))}</span>
             <span>🕒 ${escapeHtml(formatDate(r.created_at))}</span>
             <span>❤️ ${Number(r.like_count || 0)}</span>
           </div>
         </div>
       </div>
       <div class="admin-card-controls">
-        ${priorityChip(r.priorita)}
+        <label class="admin-status-wrap">
+          <span>Priorità</span>
+          <select class="select admin-priority" data-id="${r.id}">
+            ${PRIORITIES.map(p => `<option value="${p}" ${r.priorita === p ? "selected" : ""}>${capitalize(p)}</option>`).join("")}
+          </select>
+        </label>
         <label class="admin-status-wrap">
           <span>Stato</span>
           <select class="select admin-status" data-id="${r.id}">
@@ -1005,7 +1040,6 @@ function adminCardHtml(r) {
     </article>
   `;
 }
-
 function settingsHtml() {
   const p = state.profile || {};
   return `
@@ -1037,7 +1071,7 @@ function settingsHtml() {
             ${locationFieldsHtml(p, { required: false })}
             <div class="field span-2">
               <label>Foto profilo</label>
-              <input class="input" name="avatar_url" value="${escapeAttr(p.avatar_url || "")}" placeholder="https://... oppure lascia vuoto" />
+              ${avatarUploadHtml(p, "profile")}
             </div>
             <div class="span-2" style="display:flex; justify-content:flex-end;"><button class="btn btn-primary" type="submit">Salva impostazioni</button></div>
           </form>
@@ -1073,12 +1107,14 @@ function bindAppEvents(active) {
 
   if (active === "profile") {
     bindLocationControls($("#profile-form"));
+    bindAvatarUpload($("#profile-form"));
     bindProfileForm();
     bindReportActions();
   }
 
   if (active === "settings") {
     bindLocationControls($("#profile-form"));
+    bindAvatarUpload($("#profile-form"));
     bindProfileForm();
   }
 
@@ -1128,6 +1164,43 @@ function bindReportActions() {
       await deleteReport(btn.dataset.id);
     });
   });
+}
+
+function avatarUploadHtml(profile = {}, context = "profile") {
+  const src = profile?.avatar_url || "";
+  const label = src ? "Sostituisci foto profilo" : "Carica foto profilo";
+  return `
+    <div class="avatar-upload" data-avatar-upload>
+      <div class="avatar-upload-preview" data-avatar-preview>
+        ${src ? `<img src="${escapeAttr(src)}" alt="Foto profilo attuale" />` : avatarHtml(profile, "avatar-upload-fallback")}
+      </div>
+      <label class="upload-box upload-box--avatar">
+        <input type="file" name="avatar_file" accept="image/*" data-avatar-input />
+        <div data-avatar-copy><strong>${label}</strong><br><span style="color: var(--muted); font-weight: 650;">JPG, PNG o WebP. Max 5 MB.</span></div>
+      </label>
+      <input type="hidden" name="avatar_url" value="${escapeAttr(src)}" />
+      <small class="field-hint">Se non carichi una foto, CivicVois usa le tue iniziali.</small>
+    </div>
+  `;
+}
+
+function bindAvatarUpload(root = document) {
+  const input = root?.querySelector?.("[data-avatar-input]");
+  if (!input) return;
+  input.addEventListener("change", () => previewAvatar(input, root));
+}
+
+function previewAvatar(input, root = document) {
+  const file = input.files?.[0];
+  const preview = root?.querySelector?.("[data-avatar-preview]");
+  const copy = root?.querySelector?.("[data-avatar-copy]");
+  if (!file || !preview) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    preview.innerHTML = `<img src="${reader.result}" alt="Anteprima foto profilo" />`;
+    if (copy) copy.innerHTML = `<strong>Foto selezionata</strong><br><span style="color: var(--muted); font-weight: 650;">${escapeHtml(file.name)}</span>`;
+  };
+  reader.readAsDataURL(file);
 }
 
 function locationFieldsHtml(values = {}, options = {}) {
@@ -1353,7 +1426,11 @@ function bindProfileForm() {
 
 function bindAdminActions() {
   $$(".admin-status").forEach(select => {
-    select.addEventListener("change", async () => updateReportStatus(select.dataset.id, select.value));
+    select.addEventListener("change", async () => updateReportAdmin(select.dataset.id, { stato: select.value }));
+  });
+
+  $$(".admin-priority").forEach(select => {
+    select.addEventListener("change", async () => updateReportAdmin(select.dataset.id, { priorita: select.value }));
   });
 
   $$(".delete-report").forEach(btn => {
@@ -1525,6 +1602,7 @@ async function updateProfile(formData) {
   const location = validateLocationSelection(formData, { allowEmpty: true });
   if (!location.ok) return toast(location.message, "error");
 
+  const avatarFile = formData.get("avatar_file");
   const payload = {
     full_name: clean(formData.get("full_name")),
     username: clean(formData.get("username")).toLowerCase(),
@@ -1536,7 +1614,13 @@ async function updateProfile(formData) {
     updated_at: new Date().toISOString()
   };
 
+  if (!payload.full_name || !payload.username) return toast("Nome completo e username sono obbligatori.", "error");
+
   try {
+    if (avatarFile instanceof File && avatarFile.size > 0) {
+      payload.avatar_url = await uploadPhoto(avatarFile, "avatars");
+    }
+
     if (DEMO_MODE) {
       demo.updateProfile(state.user.id, payload);
     } else {
@@ -1545,6 +1629,7 @@ async function updateProfile(formData) {
     }
 
     await loadProfile();
+    await refreshData();
     toast("Profilo aggiornato.", "success");
     render();
   } catch (error) {
@@ -1552,7 +1637,6 @@ async function updateProfile(formData) {
     toast(error.message || "Profilo non aggiornato.", "error");
   }
 }
-
 async function toggleLike(reportId) {
   if (!state.user) return setRoute("auth");
   const already = state.likes.has(reportId);
@@ -1582,23 +1666,23 @@ async function toggleLike(reportId) {
   }
 }
 
-async function updateReportStatus(id, status) {
+async function updateReportAdmin(id, patch) {
   try {
+    const payload = { ...patch, updated_at: new Date().toISOString() };
     if (DEMO_MODE) {
-      demo.updateReport(id, { stato: status });
+      demo.updateReport(id, payload);
     } else {
-      const { error } = await supabase.from("segnalazioni").update({ stato: status, updated_at: new Date().toISOString() }).eq("id", id);
+      const { error } = await supabase.from("segnalazioni").update(payload).eq("id", id);
       if (error) throw error;
     }
     await refreshData();
-    toast("Stato aggiornato.", "success");
+    toast("Segnalazione aggiornata.", "success");
     render();
   } catch (error) {
     console.error(error);
-    toast(error.message || "Stato non aggiornato.", "error");
+    toast(error.message || "Segnalazione non aggiornata.", "error");
   }
 }
-
 async function deleteReport(id) {
   try {
     if (DEMO_MODE) {
@@ -2044,11 +2128,12 @@ function createDemoBackend() {
           password: payload.password,
           full_name: payload.full_name,
           username: payload.username,
-          comune: payload.comune,
-          provincia: "",
-          regione: "",
-          role: "user",
-          bio: ""
+          regione: payload.regione || "",
+          provincia: payload.provincia || "",
+          comune: payload.comune || "",
+          role: db.users.length === 0 ? "admin" : "user",
+          bio: payload.bio || "",
+          avatar_url: payload.avatar_url || ""
         };
         db.users.push(user);
         save();
@@ -2082,6 +2167,8 @@ function createDemoBackend() {
             username: byId[r.user_id].username,
             full_name: byId[r.user_id].full_name,
             avatar_url: byId[r.user_id].avatar_url || "",
+            regione: byId[r.user_id].regione,
+            provincia: byId[r.user_id].provincia,
             comune: byId[r.user_id].comune
           } : null
         }))

@@ -1,12 +1,20 @@
-# CivicVois - Netlify Blobs Definitivo V2
+# CivicVois - Netlify Blobs + profili completi
 
-Questa versione usa Netlify Functions 2.0 (`netlify/functions/civicvois-api.mjs`) e Netlify Blobs.
+Versione compatibile con Netlify Functions 2.0 e Netlify Blobs.
 
-Test dopo il deploy:
+Non usa Supabase, MySQL o PHP.
+
+## Test rapidi dopo il deploy
 
 - `/.netlify/functions/civicvois-api?health=1` deve rispondere `ok: true`
 - `/.netlify/functions/civicvois-api?backend=1` deve rispondere `ok: true` e `backend: netlify-blobs`
 
-Non usa Supabase. Non servono chiavi `sb_publishable` o `sb_secret`.
+## Migliorie incluse
 
-Se `health=1` funziona ma `backend=1` non funziona con `MissingBlobsEnvironmentError`, il deploy sta ancora usando una vecchia function Lambda-compatibile: cancella il vecchio file `netlify/functions/civicvois-api.js`, verifica che GitHub contenga solo `civicvois-api.mjs`, poi fai `Clear cache and deploy site`.
+- Registrazione completa con territorio, bio e foto profilo.
+- Foto profilo salvata su Netlify Blobs.
+- Impostazioni profilo modificabili e persistenti.
+- Località vincolate Regione → Provincia → Comune.
+- Segnalazioni con dati territoriali strutturati.
+- Admin con modifica stato/priorità e cancellazione.
+- Service worker aggiornato per evitare cache vecchia.
