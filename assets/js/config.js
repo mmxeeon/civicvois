@@ -1,10 +1,7 @@
-// CivicVois - configurazione Supabase
-// Configurazione pronta per Netlify + Supabase.
-// NOTA: qui va inserita solo la chiave pubblica/publishable key, mai una secret key.
+// CivicVois configurazione runtime
+// Backend definitivo: Netlify Functions + Netlify Blobs.
+// Questi valori sono placeholder di compatibilità: non sono chiavi reali e non chiamano Supabase.
 
-export const SUPABASE_URL = "https://zqvzpnaxsoxpljdzoijq.supabase.co";
-export const SUPABASE_ANON_KEY = "sb_publishable_0ftTXKs9-PrbOhLn--iYWw_AkWUCASj";
-
-// Se lasci false, il sito usa Supabase reale.
-// Metti true solo se vuoi forzare la modalità demo locale.
+export const SUPABASE_URL = "https://netlify-blobs.civicvois.local";
+export const SUPABASE_ANON_KEY = "netlify-blobs-local-backend-key";
 export const FORCE_DEMO_MODE = false;

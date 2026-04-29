@@ -1,10 +1,13 @@
 {
-  "name": "civicvois-netlify-supabase",
-  "version": "1.0.0",
+  "name": "civicvois-netlify-final",
+  "version": "3.0.0",
   "private": true,
   "scripts": {
     "deploy": "netlify deploy --prod",
     "dev": "netlify dev"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^9.1.0"
   },
   "devDependencies": {}
 }

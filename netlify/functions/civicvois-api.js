@@ -1,7 +1,4 @@
-const https = require("https");
-
-const DEFAULT_SUPABASE_URL = "https://zqvzpnaxsoxpljdzoijq.supabase.co";
-const DEFAULT_PUBLISHABLE_KEY = "sb_publishable_0ftTXKs9-PrbOhLn--iYWw_AkWUCASj";
+const nodeCrypto = require("crypto");
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -9,6 +6,11 @@ const CORS = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Cache-Control": "no-store"
 };
+
+const STORE_NAME = "civicvois-production-db";
+const IMAGE_STORE_NAME = "civicvois-production-files";
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
+const SESSION_SECRET = process.env.CIVICVOIS_SESSION_SECRET || "civicvois-change-this-secret-in-netlify-env";
 
 exports.handler = async function handler(event) {
   try {
@@ -20,28 +22,36 @@ exports.handler = async function handler(event) {
         return respond(200, {
           ok: true,
           service: "civicvois-api",
-          mode: "netlify-function-proxy",
-          transport: "node-https",
+          mode: "netlify-function-blobs",
+          backend: "netlify-blobs",
           timestamp: new Date().toISOString()
         });
       }
-      if (qs.supabase === "1" || qs.kind === "supabase-test") return await testSupabase(qs);
+      if (qs.supabase === "1" || qs.kind === "supabase-test" || qs.backend === "1") {
+        const db = await dataStore();
+        const { blobs } = await db.list({ prefix: "reports/" });
+        return respond(200, {
+          ok: true,
+          service: "civicvois-api",
+          backend: "netlify-blobs",
+          supabase: false,
+          message: "Supabase non viene più usato: backend persistente su Netlify Blobs attivo.",
+          reportsStored: blobs.length,
+          timestamp: new Date().toISOString()
+        });
+      }
       if (qs.kind === "object") return await getStorageObject(qs);
       return respond(404, { error: { message: "Endpoint non trovato." } });
     }
 
     if (event.httpMethod !== "POST") return respond(405, { error: { message: "Metodo non consentito." } });
 
-    const body = JSON.parse(event.body || "{}");
-    const supabaseUrl = cleanUrl(body.client?.supabaseUrl || process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL);
-    const anonKey = body.client?.anonKey || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || DEFAULT_PUBLISHABLE_KEY;
-    if (!supabaseUrl || !anonKey) return respond(500, { error: { message: "Supabase URL o publishable key mancanti." } });
+    const body = parseBody(event.body);
+    const user = verifyBearer(event.headers || {});
 
-    const userToken = getBearer(event.headers || {});
-
-    if (body.kind === "auth") return await handleAuth({ supabaseUrl, anonKey, body });
-    if (body.kind === "db") return await handleDb({ supabaseUrl, anonKey, userToken, body });
-    if (body.kind === "storage") return await handleStorage({ supabaseUrl, anonKey, userToken, body });
+    if (body.kind === "auth") return await handleAuth(body);
+    if (body.kind === "db") return await handleDb(body, user);
+    if (body.kind === "storage") return await handleStorage(body, user);
 
     return respond(400, { error: { message: "Azione non riconosciuta." } });
   } catch (error) {
@@ -51,279 +61,442 @@ exports.handler = async function handler(event) {
         message: error.message || "Errore interno Netlify Function.",
         status: error.status || 500,
         code: error.code || null,
-        cause: error.cause?.message || null,
-        payload: error.payload || null
+        details: error.details || null
       }
     });
   }
 };
 
-async function testSupabase(qs) {
-  const supabaseUrl = cleanUrl(process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL);
-  const anonKey = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || DEFAULT_PUBLISHABLE_KEY;
-  const url = `${supabaseUrl}/rest/v1/segnalazioni?select=id&limit=1`;
-  const startedAt = Date.now();
-  const json = await supabaseFetchJson(url, {
-    method: "GET",
-    anonKey,
-    userToken: null,
-    timeoutMs: Number(qs.timeout || 12000)
-  });
-  return respond(200, {
-    ok: true,
-    service: "civicvois-api",
-    supabase: true,
-    elapsedMs: Date.now() - startedAt,
-    dataPreview: Array.isArray(json) ? json.slice(0, 1) : json
-  });
-}
-
-async function handleAuth({ supabaseUrl, anonKey, body }) {
-  if (body.action === "signin") {
-    const json = await supabaseFetchJson(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-      method: "POST",
-      anonKey,
-      body: { email: body.email, password: body.password }
-    });
-    return respond(200, normalizeAuthResponse(json));
-  }
+async function handleAuth(body) {
+  const email = normalizeEmail(body.email);
+  const password = String(body.password || "");
+  if (!email || password.length < 6) throw httpError(400, "Email e password di almeno 6 caratteri sono obbligatorie.");
 
   if (body.action === "signup") {
-    const json = await supabaseFetchJson(`${supabaseUrl}/auth/v1/signup`, {
-      method: "POST",
-      anonKey,
-      body: {
-        email: body.email,
-        password: body.password,
-        data: body.data || {}
-      }
+    const db = await dataStore();
+    const existing = await getJSON(db, userEmailKey(email));
+    if (existing) throw httpError(409, "Account già esistente. Vai su Accedi e usa la password scelta in precedenza.");
+
+    const id = uuid();
+    const now = nowIso();
+    const data = body.data || {};
+    const users = await db.list({ prefix: "users/email/" });
+    const role = users.blobs.length === 0 ? "admin" : "user";
+    const passwordRecord = hashPassword(password);
+
+    const user = {
+      id,
+      email,
+      aud: "authenticated",
+      role: "authenticated",
+      user_metadata: {
+        full_name: clean(data.full_name) || clean(data.username) || email.split("@")[0],
+        username: cleanUsername(data.username || email.split("@")[0]),
+        comune: clean(data.comune || "")
+      },
+      created_at: now,
+      updated_at: now
+    };
+
+    await setJSON(db, userEmailKey(email), { id, email, ...passwordRecord, created_at: now });
+    await setJSON(db, profileKey(id), {
+      id,
+      email,
+      username: user.user_metadata.username,
+      full_name: user.user_metadata.full_name,
+      comune: user.user_metadata.comune,
+      provincia: "",
+      regione: "",
+      bio: "",
+      avatar_url: "",
+      role,
+      created_at: now,
+      updated_at: now
     });
-    return respond(200, normalizeAuthResponse(json));
+
+    return respond(200, makeAuthPayload(user));
+  }
+
+  if (body.action === "signin") {
+    const db = await dataStore();
+    const record = await getJSON(db, userEmailKey(email));
+    if (!record || !verifyPassword(password, record)) throw httpError(400, "Credenziali non valide.");
+    const profile = await getJSON(db, profileKey(record.id));
+    const user = {
+      id: record.id,
+      email: record.email,
+      aud: "authenticated",
+      role: "authenticated",
+      user_metadata: {
+        full_name: profile?.full_name || record.email.split("@")[0],
+        username: profile?.username || record.email.split("@")[0],
+        comune: profile?.comune || ""
+      },
+      created_at: record.created_at,
+      updated_at: nowIso()
+    };
+    return respond(200, makeAuthPayload(user));
   }
 
   return respond(400, { error: { message: "Azione auth non valida." } });
 }
 
-async function handleDb({ supabaseUrl, anonKey, userToken, body }) {
+async function handleDb(body, user) {
   const table = safeIdentifier(body.table);
-  const headers = makeHeaders(anonKey, userToken, { Accept: "application/json" });
-  let method = "GET";
-  let payload;
-  let prefer = null;
+  const action = String(body.action || "");
 
-  const params = new URLSearchParams();
-  if (body.action === "select") {
-    params.set("select", body.columns || "*");
-    method = "GET";
-  } else if (body.action === "insert") {
-    method = "POST";
-    payload = body.payload;
-    params.set("select", body.columns || "*");
-    prefer = "return=representation";
-  } else if (body.action === "upsert") {
-    method = "POST";
-    payload = body.payload;
-    params.set("select", body.columns || "*");
-    if (body.onConflict) params.set("on_conflict", body.onConflict);
-    prefer = `${body.ignoreDuplicates ? "resolution=ignore-duplicates" : "resolution=merge-duplicates"},return=representation`;
-  } else if (body.action === "update") {
-    method = "PATCH";
-    payload = body.payload;
-    params.set("select", body.columns || "*");
-    prefer = "return=representation";
-  } else if (body.action === "delete") {
-    method = "DELETE";
-    params.set("select", body.columns || "*");
-    prefer = "return=representation";
-  } else {
-    return respond(400, { error: { message: "Azione database non valida." } });
+  if (action === "select") {
+    const rows = await selectRows(table, body);
+    return respond(200, { data: body.single ? (rows[0] || null) : rows });
   }
 
-  for (const filter of body.filters || []) {
-    if (filter.op === "eq") params.append(safeIdentifier(filter.column), `eq.${String(filter.value)}`);
+  if (["insert", "upsert", "update", "delete"].includes(action) && !user) {
+    throw httpError(401, "Devi effettuare l'accesso.");
   }
-  for (const filter of body.inFilters || []) {
-    const values = (filter.values || []).map(v => String(v).replace(/"/g, "\\\"")).join(",");
-    params.append(safeIdentifier(filter.column), `in.(${values})`);
-  }
-  if (body.orderBy?.column) params.set("order", `${safeIdentifier(body.orderBy.column)}.${body.orderBy.ascending ? "asc" : "desc"}`);
-  if (body.limit) params.set("limit", String(body.limit));
 
-  if (prefer) headers.Prefer = prefer;
-  const url = `${supabaseUrl}/rest/v1/${table}?${params.toString()}`;
-  const json = await supabaseFetchJson(url, { method, anonKey, userToken, headers, body: payload });
+  if (action === "insert") return await insertRows(table, body, user);
+  if (action === "upsert") return await upsertRows(table, body, user);
+  if (action === "update") return await updateRows(table, body, user);
+  if (action === "delete") return await deleteRows(table, body, user);
 
-  let data = json;
-  if (body.single) data = Array.isArray(json) ? (json.length ? json[0] : null) : json;
-  return respond(200, { data });
+  return respond(400, { error: { message: "Azione database non valida." } });
 }
 
-async function handleStorage({ supabaseUrl, anonKey, userToken, body }) {
+async function selectRows(table, body) {
+  let rows = await allRows(table);
+  rows = applyFilters(rows, body.filters || [], body.inFilters || []);
+  if (body.orderBy?.column) {
+    const col = safeIdentifier(body.orderBy.column);
+    const asc = body.orderBy.ascending !== false;
+    rows.sort((a, b) => compareValues(a[col], b[col]) * (asc ? 1 : -1));
+  }
+  if (body.limit) rows = rows.slice(0, Number(body.limit));
+  return rows;
+}
+
+async function insertRows(table, body, user) {
+  const payloads = Array.isArray(body.payload) ? body.payload : [body.payload];
+  const saved = [];
+  for (const raw of payloads) {
+    const row = normalizeRow(table, { ...(raw || {}) }, user, true);
+    await saveRow(table, row);
+    if (table === "interazioni") await recalcLikeCount(row.segnalazione_id);
+    saved.push(row);
+  }
+  return respond(200, { data: saved });
+}
+
+async function upsertRows(table, body, user) {
+  const payloads = Array.isArray(body.payload) ? body.payload : [body.payload];
+  const saved = [];
+  for (const raw of payloads) {
+    const incoming = { ...(raw || {}) };
+    if (table === "profiles" && incoming.id && incoming.id !== user.id) throw httpError(403, "Non puoi modificare questo profilo.");
+    const key = rowKey(table, incoming.id || uuid());
+    const db = await dataStore();
+    const existing = await getJSON(db, key);
+    const row = normalizeRow(table, { ...(existing || {}), ...incoming }, user, !existing);
+    await saveRow(table, row);
+    saved.push(row);
+  }
+  return respond(200, { data: saved });
+}
+async function updateRows(table, body, user) {
+  let rows = await allRows(table);
+  rows = applyFilters(rows, body.filters || [], body.inFilters || []);
+  const saved = [];
+  for (const existing of rows) {
+    await assertCanModify(table, existing, user);
+    const row = normalizeRow(table, { ...existing, ...(body.payload || {}) }, user, false);
+    await saveRow(table, row);
+    saved.push(row);
+  }
+  return respond(200, { data: saved });
+}
+
+async function deleteRows(table, body, user) {
+  let rows = await allRows(table);
+  rows = applyFilters(rows, body.filters || [], body.inFilters || []);
+  const db = await dataStore();
+  const deleted = [];
+  for (const row of rows) {
+    await assertCanModify(table, row, user);
+    await db.delete(rowKey(table, row.id || `${row.utente_id}_${row.segnalazione_id}`));
+    if (table === "interazioni") await recalcLikeCount(row.segnalazione_id);
+    if (table === "segnalazioni") await deleteLikesForReport(row.id);
+    deleted.push(row);
+  }
+  return respond(200, { data: deleted });
+}
+
+async function handleStorage(body, user) {
+  if (!user) throw httpError(401, "Devi effettuare l'accesso.");
   if (body.action !== "upload") return respond(400, { error: { message: "Azione storage non valida." } });
   const bucket = safeBucket(body.bucket);
   const path = safePath(body.path);
   const buffer = Buffer.from(String(body.base64 || ""), "base64");
-  const method = body.upsert ? "PUT" : "POST";
-  const url = `${supabaseUrl}/storage/v1/object/${bucket}/${encodePath(path)}`;
+  if (!buffer.length) throw httpError(400, "File vuoto o non valido.");
+  if (buffer.length > 5 * 1024 * 1024) throw httpError(413, "File troppo grande. Limite: 5 MB.");
 
-  const { statusCode, text } = await requestText(url, {
-    method,
-    headers: makeHeaders(anonKey, userToken, {
-      "Content-Type": body.contentType || "application/octet-stream",
-      "x-upsert": body.upsert ? "true" : "false"
-    }),
-    body: buffer
+  const files = await fileStore();
+  await files.set(fileKey(bucket, path), buffer, {
+    metadata: {
+      bucket,
+      path,
+      owner: user.id,
+      contentType: body.contentType || "application/octet-stream",
+      created_at: nowIso()
+    }
   });
-  const json = parseJson(text);
-  if (statusCode < 200 || statusCode >= 300) throwHttp(statusCode, json, "Storage error");
-  return respond(200, { data: json || { path } });
+  return respond(200, { data: { path, bucket } });
 }
 
 async function getStorageObject(qs) {
-  const supabaseUrl = cleanUrl(process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL);
   const bucket = safeBucket(qs.bucket || "");
   const path = safePath(qs.path || "");
-  const url = `${supabaseUrl}/storage/v1/object/public/${bucket}/${encodePath(path)}`;
-  const { statusCode, buffer, headers } = await requestBuffer(url, { method: "GET", headers: {} });
-  if (statusCode < 200 || statusCode >= 300) return respond(statusCode, { error: { message: "File non trovato." } });
+  const files = await fileStore();
+  const entry = await files.getWithMetadata(fileKey(bucket, path), { type: "arrayBuffer" });
+  if (!entry || entry.data === null) return respond(404, { error: { message: "File non trovato." } });
   return {
     statusCode: 200,
     headers: {
       ...CORS,
-      "Content-Type": headers["content-type"] || "application/octet-stream",
+      "Content-Type": entry.metadata?.contentType || "application/octet-stream",
       "Cache-Control": "public, max-age=3600"
     },
     isBase64Encoded: true,
-    body: buffer.toString("base64")
+    body: Buffer.from(entry.data).toString("base64")
   };
 }
 
-async function supabaseFetchJson(url, { method = "GET", anonKey, userToken, headers = null, body = undefined, timeoutMs = 12000 }) {
-  const finalHeaders = headers || makeHeaders(anonKey, userToken);
-  if (!finalHeaders["Content-Type"] && body !== undefined) finalHeaders["Content-Type"] = "application/json";
-  const { statusCode, text } = await requestText(url, {
-    method,
-    headers: finalHeaders,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    timeoutMs
-  });
-  const json = parseJson(text);
-  if (statusCode < 200 || statusCode >= 300) throwHttp(statusCode, json, `Supabase error ${statusCode}`);
-  return json;
-}
-
-function requestText(urlString, options = {}) {
-  return requestRaw(urlString, options).then(res => ({ ...res, text: res.buffer.toString("utf8") }));
-}
-
-function requestBuffer(urlString, options = {}) {
-  return requestRaw(urlString, options);
-}
-
-function requestRaw(urlString, options = {}) {
-  const url = new URL(urlString);
-  const body = options.body;
-  const timeoutMs = options.timeoutMs || 12000;
-
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      protocol: url.protocol,
-      hostname: url.hostname,
-      port: url.port || 443,
-      path: `${url.pathname}${url.search}`,
-      method: options.method || "GET",
-      headers: {
-        "User-Agent": "CivicVois-Netlify-Function/1.0",
-        ...(options.headers || {})
-      },
-      timeout: timeoutMs
-    }, res => {
-      const chunks = [];
-      res.on("data", chunk => chunks.push(chunk));
-      res.on("end", () => resolve({
-        statusCode: res.statusCode || 0,
-        headers: res.headers || {},
-        buffer: Buffer.concat(chunks)
-      }));
-    });
-
-    req.on("timeout", () => {
-      req.destroy(new Error(`Timeout verso Supabase dopo ${timeoutMs}ms`));
-    });
-    req.on("error", error => {
-      const err = new Error(`Connessione Supabase non riuscita: ${error.message}`);
-      err.code = error.code || null;
-      err.cause = error;
-      reject(err);
-    });
-
-    if (body !== undefined) req.write(body);
-    req.end();
-  });
-}
-
-function makeHeaders(anonKey, userToken, extra = {}) {
-  const headers = {
-    apikey: anonKey,
-    ...extra
-  };
-  // Con le nuove chiavi sb_publishable_* è più sicuro inviare Authorization solo quando abbiamo il vero JWT utente.
-  // Per le chiamate anonime basta apikey: il gateway Supabase risolve il ruolo anon.
-  if (userToken) headers.Authorization = `Bearer ${userToken}`;
-  return headers;
-}
-
-function normalizeAuthResponse(json) {
-  if (json?.access_token) {
-    return {
-      session: {
-        access_token: json.access_token,
-        refresh_token: json.refresh_token,
-        expires_in: json.expires_in,
-        expires_at: json.expires_at || Math.floor(Date.now() / 1000) + Number(json.expires_in || 3600),
-        token_type: json.token_type || "bearer",
-        user: json.user
-      },
-      user: json.user || null
-    };
+async function allRows(table) {
+  const db = await dataStore();
+  const prefix = tablePrefix(table);
+  const { blobs } = await db.list({ prefix });
+  const rows = [];
+  for (const blob of blobs) {
+    const row = await getJSON(db, blob.key);
+    if (row) rows.push(row);
   }
-  return { session: json?.session || null, user: json?.user || null };
+  return rows;
 }
 
-function parseJson(text) {
-  try { return text ? JSON.parse(text) : null; } catch { return { message: text }; }
+async function saveRow(table, row) {
+  const db = await dataStore();
+  await setJSON(db, rowKey(table, row.id || `${row.utente_id}_${row.segnalazione_id}`), row);
 }
 
-function throwHttp(statusCode, json, fallback) {
-  const message = json?.msg || json?.message || json?.error_description || json?.error || fallback || `Errore HTTP ${statusCode}`;
-  const error = new Error(message);
-  error.status = statusCode;
-  error.payload = json;
-  throw error;
+function normalizeRow(table, row, user, isNew) {
+  const now = nowIso();
+  if (table === "profiles") {
+    row.id = row.id || user.id;
+    row.email = normalizeEmail(row.email || user.email);
+    row.username = cleanUsername(row.username || row.email.split("@")[0]);
+    row.full_name = clean(row.full_name || row.username);
+    row.role = row.role || "user";
+    row.updated_at = now;
+    if (isNew) row.created_at = row.created_at || now;
+    return row;
+  }
+
+  if (table === "segnalazioni") {
+    row.id = row.id || uuid();
+    row.user_id = row.user_id || user.id;
+    row.titolo = clean(row.titolo);
+    row.tipo = clean(row.tipo);
+    row.descrizione = clean(row.descrizione);
+    row.priorita = clean(row.priorita || "media");
+    row.stato = clean(row.stato || "nuova");
+    row.like_count = Number(row.like_count || 0);
+    row.updated_at = now;
+    if (isNew) row.created_at = row.created_at || now;
+    return row;
+  }
+
+  if (table === "interazioni") {
+    row.utente_id = row.utente_id || user.id;
+    row.segnalazione_id = String(row.segnalazione_id || "");
+    if (!row.segnalazione_id) throw httpError(400, "Segnalazione mancante.");
+    row.id = `${row.utente_id}_${row.segnalazione_id}`;
+    row.created_at = row.created_at || now;
+    return row;
+  }
+
+  throw httpError(400, "Tabella non supportata.");
 }
 
-function getBearer(headers) {
+async function assertCanModify(table, row, user) {
+  if (!user) throw httpError(401, "Devi effettuare l'accesso.");
+  if (await isAdmin(user.id)) return;
+  if (table === "profiles" && row.id === user.id) return;
+  if (table === "segnalazioni" && row.user_id === user.id) return;
+  if (table === "interazioni" && row.utente_id === user.id) return;
+  throw httpError(403, "Non hai il permesso per questa operazione.");
+}
+
+async function isAdmin(userId) {
+  const db = await dataStore();
+  const profile = await getJSON(db, profileKey(userId));
+  return profile?.role === "admin";
+}
+
+async function recalcLikeCount(reportId) {
+  if (!reportId) return;
+  const db = await dataStore();
+  const report = await getJSON(db, rowKey("segnalazioni", reportId));
+  if (!report) return;
+  const { blobs } = await db.list({ prefix: "likes/" });
+  let count = 0;
+  for (const blob of blobs) if (blob.key.endsWith(`/${reportId}`)) count += 1;
+  report.like_count = count;
+  report.updated_at = nowIso();
+  await setJSON(db, rowKey("segnalazioni", reportId), report);
+}
+
+async function deleteLikesForReport(reportId) {
+  const db = await dataStore();
+  const { blobs } = await db.list({ prefix: "likes/" });
+  for (const blob of blobs) if (blob.key.endsWith(`/${reportId}`)) await db.delete(blob.key);
+}
+
+function applyFilters(rows, filters, inFilters) {
+  let out = [...rows];
+  for (const filter of filters || []) {
+    if (filter.op === "eq") {
+      const col = safeIdentifier(filter.column);
+      out = out.filter(row => String(row[col] ?? "") === String(filter.value ?? ""));
+    }
+  }
+  for (const filter of inFilters || []) {
+    const col = safeIdentifier(filter.column);
+    const values = new Set((filter.values || []).map(v => String(v)));
+    out = out.filter(row => values.has(String(row[col] ?? "")));
+  }
+  return out;
+}
+
+function tablePrefix(table) {
+  if (table === "profiles") return "profiles/";
+  if (table === "segnalazioni") return "reports/";
+  if (table === "interazioni") return "likes/";
+  throw httpError(400, "Tabella non supportata.");
+}
+function rowKey(table, id) {
+  if (table === "profiles") return profileKey(id);
+  if (table === "segnalazioni") return `reports/${id}`;
+  if (table === "interazioni") return `likes/${String(id).replace(/^likes\//, "")}`;
+  throw httpError(400, "Tabella non supportata.");
+}
+function profileKey(id) { return `profiles/${id}`; }
+function userEmailKey(email) { return `users/email/${base64url(email)}`; }
+function fileKey(bucket, path) { return `files/${bucket}/${path}`; }
+
+async function dataStore() {
+  const { getStore } = await import("@netlify/blobs");
+  return getStore(STORE_NAME);
+}
+async function fileStore() {
+  const { getStore } = await import("@netlify/blobs");
+  return getStore(IMAGE_STORE_NAME);
+}
+async function getJSON(store, key) {
+  try { return await store.get(key, { type: "json" }); }
+  catch { return null; }
+}
+async function setJSON(store, key, value) {
+  await store.set(key, JSON.stringify(value), { metadata: { contentType: "application/json" } });
+}
+function makeAuthPayload(user) {
+  const accessToken = signToken({ sub: user.id, email: user.email, exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS });
+  return {
+    session: {
+      access_token: accessToken,
+      refresh_token: accessToken,
+      expires_in: SESSION_TTL_SECONDS,
+      expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+      token_type: "bearer",
+      user
+    },
+    user
+  };
+}
+function signToken(payload) {
+  const header = { alg: "HS256", typ: "JWT" };
+  const encoded = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(payload))}`;
+  const sig = nodeCrypto.createHmac("sha256", SESSION_SECRET).update(encoded).digest("base64url");
+  return `${encoded}.${sig}`;
+}
+function verifyBearer(headers) {
   const raw = headers.authorization || headers.Authorization || "";
   const match = /^Bearer\s+(.+)$/i.exec(raw);
-  return match ? match[1] : null;
+  if (!match) return null;
+  const token = match[1];
+  const [h, p, s] = token.split(".");
+  if (!h || !p || !s) return null;
+  const expected = nodeCrypto.createHmac("sha256", SESSION_SECRET).update(`${h}.${p}`).digest("base64url");
+  if (!timingSafeEqual(s, expected)) return null;
+  const payload = JSON.parse(Buffer.from(p, "base64url").toString("utf8"));
+  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+  return { id: payload.sub, email: payload.email };
+}
+function timingSafeEqual(a, b) {
+  const aa = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (aa.length !== bb.length) return false;
+  return nodeCrypto.timingSafeEqual(aa, bb);
 }
 
-function cleanUrl(url) { return String(url || "").replace(/\/+$/, ""); }
-function encodePath(path) { return String(path).split("/").map(encodeURIComponent).join("/"); }
+function hashPassword(password) {
+  const salt = nodeCrypto.randomBytes(16).toString("hex");
+  const hash = nodeCrypto.pbkdf2Sync(password, salt, 120000, 32, "sha256").toString("hex");
+  return { password_salt: salt, password_hash: hash };
+}
+function verifyPassword(password, record) {
+  const hash = nodeCrypto.pbkdf2Sync(String(password), record.password_salt, 120000, 32, "sha256").toString("hex");
+  return timingSafeEqual(hash, record.password_hash);
+}
+
+function parseBody(body) {
+  try { return JSON.parse(body || "{}"); } catch { throw httpError(400, "JSON non valido."); }
+}
+function normalizeEmail(email) { return String(email || "").trim().toLowerCase(); }
+function clean(value) { return String(value ?? "").trim().slice(0, 1000); }
+function cleanUsername(value) {
+  return String(value || "utente")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 28) || `utente-${uuid().slice(0, 6)}`;
+}
 function safeIdentifier(value) {
   const s = String(value || "");
-  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(s)) throw new Error("Identificatore non valido.");
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(s)) throw httpError(400, "Identificatore non valido.");
   return s;
 }
 function safeBucket(value) {
   const s = String(value || "");
-  if (!/^[a-zA-Z0-9_-]+$/.test(s)) throw new Error("Bucket non valido.");
+  if (!/^[a-zA-Z0-9_-]+$/.test(s)) throw httpError(400, "Bucket non valido.");
   return s;
 }
 function safePath(value) {
   const s = String(value || "");
-  if (!s || s.includes("..")) throw new Error("Percorso file non valido.");
+  if (!s || s.includes("..")) throw httpError(400, "Percorso file non valido.");
   return s.replace(/^\/+/, "");
+}
+function base64url(value) { return Buffer.from(String(value)).toString("base64url"); }
+function uuid() { return nodeCrypto.randomUUID(); }
+function nowIso() { return new Date().toISOString(); }
+function compareValues(a, b) {
+  const da = Date.parse(a), db = Date.parse(b);
+  if (!Number.isNaN(da) && !Number.isNaN(db)) return da - db;
+  return String(a ?? "").localeCompare(String(b ?? ""));
+}
+function httpError(status, message, details = null) {
+  const err = new Error(message);
+  err.status = status;
+  err.details = details;
+  return err;
 }
 function respond(statusCode, payload) {
   return {

@@ -1,4 +1,4 @@
-// CivicVois Supabase proxy client
+// CivicVois backend proxy client
 // Questa build non chiama più *.supabase.co direttamente dal browser.
 // Tutte le richieste passano da una Netlify Function same-origin per evitare
 // problemi di CORS, DNS locale, estensioni browser, mixed-content o TLS sul dominio custom.

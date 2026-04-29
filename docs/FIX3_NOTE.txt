@@ -1,8 +1,0 @@
-FIX3 - Header Supabase corretti
-
-Questa build usa fetch diretto ma replica il comportamento del client ufficiale Supabase:
-- header apikey = sb_publishable_...
-- header Authorization = Bearer sb_publishable_... per richieste anonime
-- header Authorization = Bearer <JWT utente> dopo login
-
-Serve a evitare errori di gateway/CORS con le nuove publishable keys.

@@ -1,4 +1,0 @@
-FIX2 - 29/04/2026
-- Rimosso il join embedded tra segnalazioni e profiles: ora la lettura avviene in due query più robuste.
-- Aggiunto safe fetch per le nuove chiavi Supabase sb_publishable_: la chiave pubblica resta nell'header apikey, ma non viene inviata come Bearer token quando non c'è un JWT utente.
-- Migliorato il messaggio di errore e bloccati i toast duplicati.

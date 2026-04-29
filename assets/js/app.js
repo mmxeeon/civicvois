@@ -31,7 +31,7 @@ const app = $("#app");
 
 const hasSupabaseConfig = Boolean(SUPABASE_URL?.startsWith("https://") && SUPABASE_ANON_KEY?.length > 20);
 const DEMO_MODE = FORCE_DEMO_MODE || !hasSupabaseConfig;
-// Client Supabase tramite Netlify Function same-origin.
+// Client backend tramite Netlify Function same-origin.
 // Questa versione evita le chiamate dirette del browser a *.supabase.co,
 // che nel tuo caso generavano "Failed to fetch" anche con URL/key corretti.
 const supabase = DEMO_MODE ? null : createProxySupabaseClient({
@@ -85,7 +85,7 @@ function installDebugHelpers() {
       };
     },
     async testRest() {
-      if (DEMO_MODE || !supabase) return { ok: false, error: "Supabase non configurato o demo mode attiva" };
+      if (DEMO_MODE || !supabase) return { ok: false, error: "Backend non configurato o demo mode attiva" };
       const result = await supabase
         .from("segnalazioni")
         .select("id,titolo,created_at")
@@ -95,7 +95,7 @@ function installDebugHelpers() {
       return result;
     },
     async testAuth() {
-      if (DEMO_MODE || !supabase) return { ok: false, error: "Supabase non configurato o demo mode attiva" };
+      if (DEMO_MODE || !supabase) return { ok: false, error: "Backend non configurato o demo mode attiva" };
       const result = await supabase.auth.getSession();
       console.log("CV_DEBUG.testAuth()", result);
       return result;
@@ -143,16 +143,16 @@ function cleanUsername(value) {
   return cleaned || `utente-${crypto.randomUUID().slice(0, 6)}`;
 }
 
-function niceSupabaseError(error, fallback = "Operazione non riuscita.") {
+function niceBackendError(error, fallback = "Operazione non riuscita.") {
   const raw = String(error?.message || error?.error_description || error || "").trim();
   const message = raw.toLowerCase();
 
   if (message.includes("failed to fetch")) return `${fallback} Connessione non riuscita. Questa build usa una Netlify Function proxy: controlla che il deploy abbia incluso la cartella netlify/functions e che Netlify abbia pubblicato le Functions.`;
   if (message.includes("invalid login credentials")) return "Email o password non corretti.";
-  if (message.includes("email not confirmed")) return "Devi confermare la mail prima di accedere, oppure disattivare la conferma email in Supabase Auth.";
+  if (message.includes("email not confirmed")) return "Accesso non riuscito. Controlla email e password.";
   if (message.includes("already registered") || message.includes("user already registered")) return "Questo indirizzo email è già registrato. Vai su Accedi.";
   if (message.includes("duplicate") && message.includes("username")) return "Username già usato. Scegline uno diverso.";
-  if (message.includes("violates row-level security") || message.includes("row-level security")) return `${fallback} Policy RLS Supabase da correggere.`;
+  if (message.includes("violates row-level security") || message.includes("row-level security")) return `${fallback} Permessi backend da correggere.`;
 
   return raw || fallback;
 }
@@ -288,7 +288,7 @@ async function loadProfile() {
     state.profile = data;
   } catch (error) {
     console.error("Errore caricamento profilo", error);
-    toast(niceSupabaseError(error, "Profilo non caricato."), "error");
+    toast(niceBackendError(error, "Profilo non caricato."), "error");
   }
 }
 
@@ -300,7 +300,7 @@ async function loadReports() {
 
   try {
     // Lettura in due passaggi, senza join PostgREST embedded.
-    // È più solida perché non dipende dal nome della relazione nella cache schema di Supabase.
+    // È più solida perché non dipende dal nome della relazione nella cache della relazione dati.
     const { data: reports, error } = await withRetry(() => supabase
       .from("segnalazioni")
       .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
@@ -335,7 +335,7 @@ async function loadReports() {
     console.error("Errore lettura segnalazioni", error);
     state.reports = [];
     if (state.route !== "auth") {
-      toast(niceSupabaseError(error, "Non riesco a leggere le segnalazioni."), "error");
+      toast(niceBackendError(error, "Non riesco a leggere le segnalazioni."), "error");
     }
   }
 }
@@ -468,7 +468,7 @@ function renderLanding() {
 
         <section id="vantaggi" class="section">
           <h2 class="section-title">Più credibile. Più veloce. Più app.</h2>
-          <p class="section-lead">Questa build è pensata per Netlify e Supabase: frontend statico moderno, backend cloud con autenticazione, database, storage immagini e policy di sicurezza.</p>
+          <p class="section-lead">Questa build è pensata per Netlify: frontend statico moderno, Netlify Functions e Netlify Blobs per autenticazione, database, immagini e like.</p>
         </section>
       </main>
     </div>
@@ -482,14 +482,14 @@ function renderAuthPage(mode = "login") {
       <section class="auth-copy">
         ${brandHtml()}
         <h1>Accedi alla piattaforma civica.</h1>
-        <p>Gestisci segnalazioni, foto, like, profilo e stati in una versione compatibile con Netlify. ${DEMO_MODE ? "Ora sei in modalità demo locale: appena colleghi Supabase diventa online davvero." : "Backend Supabase collegato."}</p>
+        <p>Gestisci segnalazioni, foto, like, profilo e stati in una versione compatibile con Netlify. ${DEMO_MODE ? "Ora sei in modalità demo locale." : "Backend Netlify collegato."}</p>
       </section>
       <section class="auth-card">
         <div class="auth-tabs">
           <button class="auth-tab ${mode === "login" ? "is-active" : ""}" data-auth-tab="login">Accedi</button>
           <button class="auth-tab ${mode === "register" ? "is-active" : ""}" data-auth-tab="register">Registrati</button>
         </div>
-        ${DEMO_MODE ? `<div class="notice"><strong>Modalità demo attiva</strong>Il sito funziona subito in locale. Per renderlo reale, inserisci URL e anon key Supabase in <code>assets/js/config.js</code>.</div>` : ""}
+        ${DEMO_MODE ? `<div class="notice"><strong>Modalità demo attiva</strong>Il sito funziona in locale. Online usa Netlify Functions e Netlify Blobs.</div>` : ""}
         <div id="auth-form-wrap">${mode === "login" ? loginFormHtml() : registerFormHtml()}</div>
       </section>
     </main>
@@ -562,7 +562,7 @@ document.addEventListener("click", async (event) => {
 
 async function handleDemoFastLogin() {
   if (!DEMO_MODE) {
-    toast("Il login demo è disponibile solo se Supabase non è configurato.", "warning");
+    toast("Il login demo è disponibile solo se il backend non è configurato.", "warning");
     return;
   }
   state.user = demo.ensureUser({
@@ -596,7 +596,7 @@ async function handleLogin(formData) {
 
   try {
     const { data, error } = await withRetry(() => supabase.auth.signInWithPassword({ email, password }));
-    if (error) return toast(niceSupabaseError(error, "Accesso non riuscito."), "error");
+    if (error) return toast(niceBackendError(error, "Accesso non riuscito."), "error");
     state.session = data.session;
     state.user = data.user;
     await ensureProfileFromAuth(data.user);
@@ -606,7 +606,7 @@ async function handleLogin(formData) {
     setRoute("dashboard");
   } catch (error) {
     console.error("Errore login", error);
-    toast(niceSupabaseError(error, "Accesso non riuscito."), "error");
+    toast(niceBackendError(error, "Accesso non riuscito."), "error");
   }
 }
 
@@ -646,7 +646,7 @@ async function handleRegister(formData) {
       }
     }));
 
-    if (error) return toast(niceSupabaseError(error, "Registrazione non riuscita."), "error");
+    if (error) return toast(niceBackendError(error, "Registrazione non riuscita."), "error");
 
     if (data.user && data.session) {
       state.session = data.session;
@@ -658,11 +658,11 @@ async function handleRegister(formData) {
       return setRoute("dashboard");
     }
 
-    toast("Account creato. Se non entra subito, conferma la mail o disattiva la conferma email in Supabase Auth.", "success");
+    toast("Account creato. Ora puoi usare CivicVois.", "success");
     renderAuthPage("login");
   } catch (error) {
     console.error("Errore registrazione", error);
-    toast(niceSupabaseError(error, "Registrazione non riuscita."), "error");
+    toast(niceBackendError(error, "Registrazione non riuscita."), "error");
   }
 }
 
@@ -942,7 +942,7 @@ function adminHtml() {
   if (!isAdmin) {
     return `
       <div class="topbar"><div><h1>Area admin</h1><p>Accesso riservato agli amministratori.</p></div></div>
-      <section class="panel panel-pad">${emptyHtml("Non sei amministratore", "Per abilitarti, imposta role = 'admin' nella tabella profiles di Supabase.")}</section>
+      <section class="panel panel-pad">${emptyHtml("Non sei amministratore", "Il primo account registrato diventa admin automaticamente.")}</section>
     `;
   }
 
@@ -988,11 +988,11 @@ function settingsHtml() {
       <p class="panel-subtitle">Qui capisci subito se il sito sta usando dati reali o solo la demo locale.</p>
       <div style="height:16px"></div>
       <div class="detail-grid">
-        <div class="detail-box"><b>Backend</b><span>${DEMO_MODE ? "Demo locale" : "Supabase"}</span></div>
+        <div class="detail-box"><b>Backend</b><span>${DEMO_MODE ? "Demo locale" : "Netlify Blobs"}</span></div>
         <div class="detail-box"><b>Hosting</b><span>Compatibile Netlify</span></div>
-        <div class="detail-box"><b>Auth</b><span>${DEMO_MODE ? "LocalStorage" : "Supabase Auth"}</span></div>
+        <div class="detail-box"><b>Auth</b><span>${DEMO_MODE ? "LocalStorage" : "Netlify Function"}</span></div>
       </div>
-      ${DEMO_MODE ? demoNoticeHtml() : `<div class="notice" style="background:var(--success-soft); color:var(--success); border-color:#bbf7d0;"><strong>Supabase collegato</strong>Il sito è pronto a salvare utenti, segnalazioni, like e immagini online.</div>`}
+      ${DEMO_MODE ? demoNoticeHtml() : `<div class="notice" style="background:var(--success-soft); color:var(--success); border-color:#bbf7d0;"><strong>Backend Netlify collegato</strong>Il sito è pronto a salvare utenti, segnalazioni, like e immagini online.</div>`}
     </section>
   `;
 }
@@ -1543,7 +1543,7 @@ function demoNoticeHtml() {
   return `
     <div class="notice" style="margin-bottom:16px;">
       <strong>Modalità demo locale attiva</strong>
-      L'interfaccia funziona subito su Netlify, ma i dati restano nel browser. Per renderla vera: crea Supabase, esegui <code>supabase/schema.sql</code>, poi inserisci URL e anon key in <code>assets/js/config.js</code>.
+      L'interfaccia è collegata a Netlify Functions e Netlify Blobs. Online i dati vengono salvati in modo persistente su Netlify.
     </div>
   `;
 }
