@@ -1,4 +1,5 @@
-const nodeCrypto = require("crypto");
+import nodeCrypto from "node:crypto";
+import { getStore } from "@netlify/blobs";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -12,17 +13,19 @@ const IMAGE_STORE_NAME = "civicvois-production-files";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
 const SESSION_SECRET = process.env.CIVICVOIS_SESSION_SECRET || "civicvois-change-this-secret-in-netlify-env";
 
-exports.handler = async function handler(event) {
+export default async function handler(req, context) {
   try {
-    if (event.httpMethod === "OPTIONS") return respond(204, "");
+    if (req.method === "OPTIONS") return respond(204, "");
 
-    if (event.httpMethod === "GET") {
-      const qs = event.queryStringParameters || {};
+    const url = new URL(req.url);
+    const qs = Object.fromEntries(url.searchParams.entries());
+
+    if (req.method === "GET") {
       if (qs.health === "1" || qs.kind === "health") {
         return respond(200, {
           ok: true,
           service: "civicvois-api",
-          mode: "netlify-function-blobs",
+          mode: "netlify-function-v2-blobs",
           backend: "netlify-blobs",
           timestamp: new Date().toISOString()
         });
@@ -33,9 +36,10 @@ exports.handler = async function handler(event) {
         return respond(200, {
           ok: true,
           service: "civicvois-api",
+          mode: "netlify-function-v2-blobs",
           backend: "netlify-blobs",
           supabase: false,
-          message: "Supabase non viene più usato: backend persistente su Netlify Blobs attivo.",
+          message: "Netlify Blobs attivo. Supabase non viene più usato.",
           reportsStored: blobs.length,
           timestamp: new Date().toISOString()
         });
@@ -44,10 +48,12 @@ exports.handler = async function handler(event) {
       return respond(404, { error: { message: "Endpoint non trovato." } });
     }
 
-    if (event.httpMethod !== "POST") return respond(405, { error: { message: "Metodo non consentito." } });
+    if (req.method !== "POST") return respond(405, { error: { message: "Metodo non consentito." } });
 
-    const body = parseBody(event.body);
-    const user = verifyBearer(event.headers || {});
+    const text = await req.text();
+    const body = parseBody(text);
+    const headers = Object.fromEntries(req.headers.entries());
+    const user = verifyBearer(headers);
 
     if (body.kind === "auth") return await handleAuth(body);
     if (body.kind === "db") return await handleDb(body, user);
@@ -61,11 +67,12 @@ exports.handler = async function handler(event) {
         message: error.message || "Errore interno Netlify Function.",
         status: error.status || 500,
         code: error.code || null,
-        details: error.details || null
+        details: error.details || null,
+        hint: error.name === "MissingBlobsEnvironmentError" ? "Il vecchio file Lambda-compatible civicvois-api.js non deve esistere. Questa build usa Netlify Functions 2.0 con civicvois-api.mjs. Fai Clear cache and deploy site." : null
       }
     });
   }
-};
+}
 
 async function handleAuth(body) {
   const email = normalizeEmail(body.email);
@@ -257,16 +264,14 @@ async function getStorageObject(qs) {
   const files = await fileStore();
   const entry = await files.getWithMetadata(fileKey(bucket, path), { type: "arrayBuffer" });
   if (!entry || entry.data === null) return respond(404, { error: { message: "File non trovato." } });
-  return {
-    statusCode: 200,
+  return new Response(Buffer.from(entry.data), {
+    status: 200,
     headers: {
       ...CORS,
       "Content-Type": entry.metadata?.contentType || "application/octet-stream",
       "Cache-Control": "public, max-age=3600"
-    },
-    isBase64Encoded: true,
-    body: Buffer.from(entry.data).toString("base64")
-  };
+    }
+  });
 }
 
 async function allRows(table) {
@@ -392,11 +397,9 @@ function userEmailKey(email) { return `users/email/${base64url(email)}`; }
 function fileKey(bucket, path) { return `files/${bucket}/${path}`; }
 
 async function dataStore() {
-  const { getStore } = await import("@netlify/blobs");
   return getStore(STORE_NAME);
 }
 async function fileStore() {
-  const { getStore } = await import("@netlify/blobs");
   return getStore(IMAGE_STORE_NAME);
 }
 async function getJSON(store, key) {
@@ -499,12 +502,15 @@ function httpError(status, message, details = null) {
   return err;
 }
 function respond(statusCode, payload) {
-  return {
-    statusCode,
+  if (statusCode === 204) {
+    return new Response(null, { status: 204, headers: CORS });
+  }
+  const isString = typeof payload === "string";
+  return new Response(isString ? payload : JSON.stringify(payload), {
+    status: statusCode,
     headers: {
       ...CORS,
-      "Content-Type": typeof payload === "string" ? "text/plain; charset=utf-8" : "application/json; charset=utf-8"
-    },
-    body: typeof payload === "string" ? payload : JSON.stringify(payload)
-  };
+      "Content-Type": isString ? "text/plain; charset=utf-8" : "application/json; charset=utf-8"
+    }
+  });
 }
