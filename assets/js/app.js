@@ -1079,7 +1079,7 @@ function newReportHtml() {
           <label>Foto</label>
           <label class="upload-box" id="upload-box">
             <input type="file" name="photo" accept="image/*" id="photo-input" />
-            <div id="upload-copy"><strong>Carica una foto</strong><br><span style="color: var(--muted); font-weight: 650;">PNG, JPG o JPEG. Consigliato: immagine chiara del problema.</span></div>
+            <div id="upload-copy"><strong>Carica una foto</strong><br><span style="color: var(--text-2); font-weight: 650;">PNG, JPG o JPEG. Consigliato: immagine chiara del problema.</span></div>
           </label>
         </div>
         <div class="span-2" style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
@@ -1337,7 +1337,7 @@ function avatarUploadHtml(profile = {}, context = "profile") {
       </div>
       <label class="upload-box upload-box--avatar">
         <input type="file" name="avatar_file" accept="image/*" data-avatar-input />
-        <div data-avatar-copy><strong>${label}</strong><br><span style="color: var(--muted); font-weight: 650;">JPG, PNG o WebP. Max 5 MB.</span></div>
+        <div data-avatar-copy><strong>${label}</strong><br><span style="color: var(--text-2); font-weight: 650;">JPG, PNG o WebP. Max 5 MB.</span></div>
       </label>
       <input type="hidden" name="avatar_url" value="${escapeAttr(src)}" />
       <small class="field-hint">Se non carichi una foto, CivicVois usa le tue iniziali.</small>
@@ -1359,7 +1359,7 @@ function previewAvatar(input, root = document) {
   const reader = new FileReader();
   reader.onload = () => {
     preview.innerHTML = `<img src="${reader.result}" alt="Anteprima foto profilo" />`;
-    if (copy) copy.innerHTML = `<strong>Foto selezionata</strong><br><span style="color: var(--muted); font-weight: 650;">${escapeHtml(file.name)}</span>`;
+    if (copy) copy.innerHTML = `<strong>Foto selezionata</strong><br><span style="color: var(--text-2); font-weight: 650;">${escapeHtml(file.name)}</span>`;
   };
   reader.readAsDataURL(file);
 }
@@ -1818,7 +1818,7 @@ function openReportDrawer(id) {
         </div>
         <div style="height:12px"></div>
         <h2>${escapeHtml(report.titolo || report.tipo)}</h2>
-        <p style="color:var(--muted); line-height:1.6; font-size:1.04rem;">${escapeHtml(report.descrizione || "")}</p>
+        <p style="color:var(--text-2); line-height:1.6; font-size:1.04rem;">${escapeHtml(report.descrizione || "")}</p>
         <div class="detail-grid">
           <div class="detail-box"><b>Categoria</b><span>${escapeHtml(capitalize(report.tipo || "—"))}</span></div>
           <div class="detail-box"><b>Comune</b><span>${escapeHtml(report.comune || "—")}</span></div>
