@@ -161,8 +161,11 @@ async function handleDb(body, user) {
   const action = String(body.action || "");
 
   if (action === "select") {
-    const rows = await selectRows(table, body);
-    return respond(200, { data: body.single ? (rows[0] || null) : rows });
+    const { rows, total } = await selectRows(table, body);
+    return respond(200, {
+      data: body.single ? (rows[0] || null) : rows,
+      count: total
+    });
   }
 
   if (["insert", "upsert", "update", "delete"].includes(action) && !user) {
@@ -178,15 +181,29 @@ async function handleDb(body, user) {
 }
 
 async function selectRows(table, body) {
+  // Carica tutti i blob della tabella in parallelo (più veloce del loop sequenziale)
   let rows = await allRows(table);
   rows = applyFilters(rows, body.filters || [], body.inFilters || []);
+
   if (body.orderBy?.column) {
     const col = safeIdentifier(body.orderBy.column);
     const asc = body.orderBy.ascending !== false;
     rows.sort((a, b) => compareValues(a[col], b[col]) * (asc ? 1 : -1));
   }
-  if (body.limit) rows = rows.slice(0, Number(body.limit));
-  return rows;
+
+  // Conta totale prima di paginare (utile per il frontend)
+  const total = rows.length;
+
+  // Paginazione via range [from, to] oppure limit semplice
+  if (body.range) {
+    const from = Number(body.range.from ?? 0);
+    const to = Number(body.range.to ?? rows.length - 1);
+    rows = rows.slice(from, to + 1);
+  } else if (body.limit) {
+    rows = rows.slice(0, Number(body.limit));
+  }
+
+  return { rows, total };
 }
 
 async function insertRows(table, body, user) {
@@ -290,12 +307,9 @@ async function allRows(table) {
   const db = await dataStore();
   const prefix = tablePrefix(table);
   const { blobs } = await db.list({ prefix });
-  const rows = [];
-  for (const blob of blobs) {
-    const row = await getJSON(db, blob.key);
-    if (row) rows.push(row);
-  }
-  return rows;
+  // Caricamento parallelo: molto più veloce del loop sequenziale su grandi dataset
+  const settled = await Promise.all(blobs.map(blob => getJSON(db, blob.key)));
+  return settled.filter(Boolean);
 }
 
 async function saveRow(table, row) {

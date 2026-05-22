@@ -1,6 +1,8 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE } from "./config.js";
 import { createProxySupabaseClient } from "./supabase-proxy.js";
 
+// ─── Costanti ──────────────────────────────────────────────────────────────
+
 const CATEGORIES = [
   "cartelli stradali assenti",
   "cartelli stradali caduti",
@@ -42,24 +44,29 @@ const FALLBACK_LOCATIONS = [
   { nome: "Roma", provincia: { nome: "Roma", sigla: "RM" }, regione: { nome: "Lazio" } }
 ];
 
+const PAGE_SIZE = 50; // segnalazioni per pagina
+
+// ─── Helpers DOM ──────────────────────────────────────────────────────────────
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 const app = $("#app");
 
+// ─── Modalità backend ─────────────────────────────────────────────────────────
+
 const hasSupabaseConfig = Boolean(SUPABASE_URL?.startsWith("https://") && SUPABASE_ANON_KEY?.length > 20);
 const DEMO_MODE = FORCE_DEMO_MODE || !hasSupabaseConfig;
-// Client backend tramite Netlify Function same-origin.
-// Questa versione evita le chiamate dirette del browser a *.supabase.co,
-// che nel tuo caso generavano "Failed to fetch" anche con URL/key corretti.
+
 const supabase = DEMO_MODE ? null : createProxySupabaseClient({
   supabaseUrl: SUPABASE_URL,
   anonKey: SUPABASE_ANON_KEY
 });
 
+// ─── Retry helper ─────────────────────────────────────────────────────────────
+
 async function withRetry(operation, attempts = 2) {
   let lastResult;
   let lastThrown;
-
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const result = await operation();
@@ -71,7 +78,6 @@ async function withRetry(operation, attempts = 2) {
     }
     await wait(450 * (attempt + 1));
   }
-
   if (lastThrown) throw lastThrown;
   return lastResult;
 }
@@ -85,6 +91,352 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ─── Messaggi di errore leggibili ─────────────────────────────────────────────
+
+function niceBackendError(error, fallback = "Operazione non riuscita.") {
+  const raw = String(error?.message || error?.error_description || error || "").trim();
+  const message = raw.toLowerCase();
+  if (message.includes("failed to fetch")) return `${fallback} Connessione non riuscita. Controlla che il deploy includa netlify/functions e che le Functions siano pubblicate.`;
+  if (message.includes("invalid login credentials")) return "Email o password non corretti.";
+  if (message.includes("email not confirmed")) return "Accesso non riuscito. Controlla email e password.";
+  if (message.includes("already registered") || message.includes("user already registered")) return "Questo indirizzo email è già registrato. Vai su Accedi.";
+  if (message.includes("duplicate") && message.includes("username")) return "Username già usato. Scegline uno diverso.";
+  if (message.includes("violates row-level security") || message.includes("row-level security")) return `${fallback} Permessi backend da correggere.`;
+  return raw || fallback;
+}
+
+// ─── USERNAME / CLEAN ─────────────────────────────────────────────────────────
+
+function cleanUsername(value) {
+  const cleaned = String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 28);
+  return cleaned || `utente-${crypto.randomUUID().slice(0, 6)}`;
+}
+
+function clean(value) {
+  return String(value || "").trim();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ADAPTER BACKEND
+//  Interfaccia uniforme: backend.login(), backend.register(), ecc.
+//  Internamente usa il demo locale oppure la Netlify Function/Supabase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const backend = DEMO_MODE ? createDemoAdapter() : createNetlifyAdapter();
+
+function createDemoAdapter() {
+  const demoDb = createDemoBackend();
+
+  return {
+    isDemo: true,
+
+    async login({ email, password }) {
+      const user = demoDb.login(email, password);
+      if (!user) throw new Error("Credenziali demo non trovate. Registrati o usa il pulsante demo.");
+      const profile = demoDb.getProfile(user.id);
+      writeLocal("cv_demo_user", user);
+      return { user, profile };
+    },
+
+    async register(payload) {
+      if (payload.avatarFile instanceof File && payload.avatarFile.size > 0) {
+        payload.avatar_url = await fileToDataUrl(payload.avatarFile);
+      }
+      const user = demoDb.ensureUser(payload);
+      const profile = demoDb.getProfile(user.id);
+      writeLocal("cv_demo_user", user);
+      return { user, profile };
+    },
+
+    async logout() {
+      localStorage.removeItem("cv_demo_user");
+    },
+
+    async restoreSession() {
+      const saved = readLocal("cv_demo_user", null);
+      if (!saved) return null;
+      const profile = demoDb.getProfile(saved.id);
+      return { user: saved, profile };
+    },
+
+    async fetchReports({ page = 0 } = {}) {
+      const all = demoDb.listReports();
+      const start = page * PAGE_SIZE;
+      return { reports: all.slice(start, start + PAGE_SIZE), total: all.length };
+    },
+
+    async fetchLikes(userId) {
+      return demoDb.getLikes(userId);
+    },
+
+    async fetchProfile(userId) {
+      return demoDb.getProfile(userId);
+    },
+
+    async saveProfile(userId, payload) {
+      if (payload.avatarFile instanceof File && payload.avatarFile.size > 0) {
+        payload.avatar_url = await fileToDataUrl(payload.avatarFile);
+      }
+      demoDb.updateProfile(userId, payload);
+      return demoDb.getProfile(userId);
+    },
+
+    async createReport(payload) {
+      if (payload.photoFile instanceof File && payload.photoFile.size > 0) {
+        payload.photo_url = await fileToDataUrl(payload.photoFile);
+      }
+      demoDb.addReport(payload);
+    },
+
+    async deleteReport(id) {
+      demoDb.deleteReport(id);
+    },
+
+    async toggleLike(userId, reportId) {
+      demoDb.toggleLike(userId, reportId);
+    },
+
+    async updateReportAdmin(id, patch) {
+      demoDb.updateReport(id, { ...patch, updated_at: new Date().toISOString() });
+    },
+
+    async uploadPhoto(file) {
+      return fileToDataUrl(file);
+    },
+
+    onAuthChange() {
+      // Nessun listener in demo mode
+    }
+  };
+}
+
+function createNetlifyAdapter() {
+  return {
+    isDemo: false,
+
+    async login({ email, password }) {
+      const { data, error } = await withRetry(() =>
+        supabase.auth.signInWithPassword({ email, password })
+      );
+      if (error) throw new Error(niceBackendError(error, "Accesso non riuscito."));
+      const profile = await this._ensureProfile(data.user);
+      return { user: data.user, session: data.session, profile };
+    },
+
+    async register({ email, password, avatarFile, ...meta }) {
+      const { data, error } = await withRetry(() =>
+        supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: meta.full_name,
+              username: meta.username,
+              regione: meta.regione,
+              provincia: meta.provincia,
+              comune: meta.comune,
+              bio: meta.bio
+            }
+          }
+        })
+      );
+      if (error) throw new Error(niceBackendError(error, "Registrazione non riuscita."));
+      if (!data.user || !data.session) return { user: null, session: null, profile: null, needsConfirm: true };
+
+      let avatar_url = "";
+      if (avatarFile instanceof File && avatarFile.size > 0) {
+        avatar_url = await this.uploadPhoto(avatarFile, "avatars");
+      }
+      const profile = await this._ensureProfile(data.user, { ...meta, avatar_url });
+      return { user: data.user, session: data.session, profile };
+    },
+
+    async logout() {
+      await supabase.auth.signOut();
+    },
+
+    async restoreSession() {
+      const { data, error } = await supabase.auth.getSession();
+      if (error || !data?.session) return null;
+      const user = data.session.user;
+      const profile = await this._loadProfile(user.id);
+      return { user, session: data.session, profile };
+    },
+
+    async fetchReports({ page = 0 } = {}) {
+      const from = page * PAGE_SIZE;
+      const to = from + PAGE_SIZE - 1;
+
+      const { data: reports, error, count } = await withRetry(() =>
+        supabase
+          .from("segnalazioni")
+          .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at", { count: "exact" })
+          .order("created_at", { ascending: false })
+          .range(from, to)
+      );
+      if (error) throw error;
+
+      const rows = reports || [];
+      const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
+      let profilesById = {};
+
+      if (userIds.length) {
+        const { data: profiles, error: profileError } = await withRetry(() =>
+          supabase
+            .from("profiles")
+            .select("id,username,full_name,avatar_url,regione,provincia,comune,bio")
+            .in("id", userIds)
+        );
+        if (!profileError) {
+          profilesById = Object.fromEntries((profiles || []).map(p => [p.id, p]));
+        }
+      }
+
+      return {
+        reports: rows.map(r => ({ ...r, profiles: profilesById[r.user_id] || null })),
+        total: count || 0
+      };
+    },
+
+    async fetchLikes(userId) {
+      const { data, error } = await withRetry(() =>
+        supabase.from("interazioni").select("segnalazione_id").eq("utente_id", userId)
+      );
+      if (error) return new Set();
+      return new Set((data || []).map(row => row.segnalazione_id));
+    },
+
+    async fetchProfile(userId) {
+      return this._loadProfile(userId);
+    },
+
+    async saveProfile(userId, payload) {
+      if (payload.avatarFile instanceof File && payload.avatarFile.size > 0) {
+        payload.avatar_url = await this.uploadPhoto(payload.avatarFile, "avatars");
+      }
+      const { error } = await supabase
+        .from("profiles")
+        .update({
+          full_name: payload.full_name,
+          username: payload.username,
+          bio: payload.bio,
+          regione: payload.regione,
+          provincia: payload.provincia,
+          comune: payload.comune,
+          avatar_url: payload.avatar_url,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", userId);
+      if (error) throw error;
+      return this._loadProfile(userId);
+    },
+
+    async createReport(payload) {
+      if (payload.photoFile instanceof File && payload.photoFile.size > 0) {
+        payload.photo_url = await this.uploadPhoto(payload.photoFile, "report-photos");
+      }
+      const { error } = await supabase.from("segnalazioni").insert(payload);
+      if (error) throw error;
+    },
+
+    async deleteReport(id) {
+      const { error } = await supabase.from("segnalazioni").delete().eq("id", id);
+      if (error) throw error;
+    },
+
+    async toggleLike(userId, reportId, alreadyLiked) {
+      if (alreadyLiked) {
+        const { error } = await supabase
+          .from("interazioni")
+          .delete()
+          .eq("utente_id", userId)
+          .eq("segnalazione_id", reportId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("interazioni")
+          .insert({ utente_id: userId, segnalazione_id: reportId });
+        if (error) throw error;
+      }
+    },
+
+    async updateReportAdmin(id, patch) {
+      const { error } = await supabase
+        .from("segnalazioni")
+        .update({ ...patch, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+    },
+
+    async uploadPhoto(file, bucket) {
+      const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+      if (!validTypes.includes(file.type)) throw new Error("Formato immagine non supportato.");
+      if (file.size > 5 * 1024 * 1024) throw new Error("Immagine troppo grande. Limite: 5 MB.");
+      const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
+      const path = `${state.user.id}/${crypto.randomUUID()}.${ext}`;
+      const { error } = await supabase.storage.from(bucket).upload(path, file, { cacheControl: "3600", upsert: false });
+      if (error) throw error;
+      const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+      return data.publicUrl;
+    },
+
+    onAuthChange(callback) {
+      supabase.auth.onAuthStateChange(callback);
+    },
+
+    // ── Metodi interni ──────────────────────────────────────────────────────
+
+    async _loadProfile(userId) {
+      const { data, error } = await withRetry(() =>
+        supabase.from("profiles").select("*").eq("id", userId).maybeSingle()
+      );
+      if (error) throw error;
+      return data;
+    },
+
+    async _ensureProfile(user, extra = {}) {
+      const metadata = user.user_metadata || {};
+      const emailName = String(user.email || "utente").split("@")[0];
+      const fallbackUsername = cleanUsername(extra.username || metadata.username || emailName || `utente-${String(user.id).slice(0, 6)}`);
+
+      const payload = {
+        id: user.id,
+        email: user.email || extra.email || null,
+        username: fallbackUsername,
+        full_name: clean(extra.full_name || metadata.full_name || fallbackUsername),
+        regione: clean(extra.regione || metadata.regione || ""),
+        provincia: clean(extra.provincia || metadata.provincia || ""),
+        comune: clean(extra.comune || metadata.comune || ""),
+        bio: clean(extra.bio || metadata.bio || ""),
+        avatar_url: clean(extra.avatar_url || metadata.avatar_url || "")
+      };
+
+      const { error } = await supabase
+        .from("profiles")
+        .upsert(payload, { onConflict: "id", ignoreDuplicates: false });
+
+      if (error && String(error.message || "").toLowerCase().includes("duplicate")) {
+        const altPayload = { ...payload, username: `${fallbackUsername}-${String(user.id).slice(0, 6)}` };
+        const { error: altError } = await supabase
+          .from("profiles")
+          .upsert(altPayload, { onConflict: "id", ignoreDuplicates: false });
+        if (altError) throw altError;
+      } else if (error) {
+        throw error;
+      }
+
+      return this._loadProfile(user.id);
+    }
+  };
+}
+
+// ─── Debug helpers ────────────────────────────────────────────────────────────
+
 function installDebugHelpers() {
   window.CV_DEBUG = {
     dump() {
@@ -97,6 +449,8 @@ function installDebugHelpers() {
         hasUser: Boolean(state?.user),
         userEmail: state?.user?.email || null,
         reportsLoaded: state?.reports?.length || 0,
+        currentPage: state?.page || 0,
+        totalReports: state?.totalReports || 0,
         origin: window.location.origin,
         apiProxy: "/.netlify/functions/civicvois-api"
       };
@@ -120,63 +474,7 @@ function installDebugHelpers() {
   };
 }
 
-async function ensureProfileFromAuth(user, extra = {}) {
-  if (!user || DEMO_MODE) return;
-
-  const metadata = user.user_metadata || {};
-  const emailName = String(user.email || "utente").split("@")[0];
-  const fallbackUsername = cleanUsername(extra.username || metadata.username || emailName || `utente-${String(user.id).slice(0, 6)}`);
-
-  const payload = {
-    id: user.id,
-    email: user.email || extra.email || null,
-    username: fallbackUsername,
-    full_name: clean(extra.full_name || metadata.full_name || fallbackUsername),
-    regione: clean(extra.regione || metadata.regione || ""),
-    provincia: clean(extra.provincia || metadata.provincia || ""),
-    comune: clean(extra.comune || metadata.comune || ""),
-    bio: clean(extra.bio || metadata.bio || ""),
-    avatar_url: clean(extra.avatar_url || metadata.avatar_url || "")
-  };
-
-  const { error } = await supabase
-    .from("profiles")
-    .upsert(payload, { onConflict: "id", ignoreDuplicates: false });
-
-  if (error && String(error.message || "").toLowerCase().includes("duplicate")) {
-    const altPayload = { ...payload, username: `${fallbackUsername}-${String(user.id).slice(0, 6)}` };
-    const { error: altError } = await supabase
-      .from("profiles")
-      .upsert(altPayload, { onConflict: "id", ignoreDuplicates: false });
-    if (altError) throw altError;
-  } else if (error) {
-    throw error;
-  }
-}
-
-function cleanUsername(value) {
-  const cleaned = String(value || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9_-]/g, "")
-    .slice(0, 28);
-  return cleaned || `utente-${crypto.randomUUID().slice(0, 6)}`;
-}
-
-function niceBackendError(error, fallback = "Operazione non riuscita.") {
-  const raw = String(error?.message || error?.error_description || error || "").trim();
-  const message = raw.toLowerCase();
-
-  if (message.includes("failed to fetch")) return `${fallback} Connessione non riuscita. Questa build usa una Netlify Function proxy: controlla che il deploy abbia incluso la cartella netlify/functions e che Netlify abbia pubblicato le Functions.`;
-  if (message.includes("invalid login credentials")) return "Email o password non corretti.";
-  if (message.includes("email not confirmed")) return "Accesso non riuscito. Controlla email e password.";
-  if (message.includes("already registered") || message.includes("user already registered")) return "Questo indirizzo email è già registrato. Vai su Accedi.";
-  if (message.includes("duplicate") && message.includes("username")) return "Username già usato. Scegline uno diverso.";
-  if (message.includes("violates row-level security") || message.includes("row-level security")) return `${fallback} Permessi backend da correggere.`;
-
-  return raw || fallback;
-}
+// ─── Stato globale ────────────────────────────────────────────────────────────
 
 const state = {
   route: "landing",
@@ -185,6 +483,8 @@ const state = {
   user: null,
   profile: null,
   reports: [],
+  totalReports: 0,
+  page: 0,
   likes: new Set(),
   filters: {
     q: "",
@@ -200,30 +500,29 @@ const state = {
   uploading: false
 };
 
-const demo = createDemoBackend();
-
 installDebugHelpers();
 init();
+
+// ─── Init & routing ───────────────────────────────────────────────────────────
 
 async function init() {
   installGlobalToastStack();
   bindHashRouter();
+
   loadItalyLocations().then((loaded) => {
     if (!loaded) return;
     if (state.route === "auth" && state.authMode === "register") return renderAuthPage("register");
     if (["new", "profile"].includes(state.route)) render();
   }).catch(error => console.warn("Anagrafica territoriale non aggiornata", error));
 
-  if (!DEMO_MODE) {
-    supabase.auth.onAuthStateChange(async (_event, session) => {
-      state.session = session;
-      state.user = session?.user || null;
-      if (state.user) await loadProfile();
-      else state.profile = null;
-      await refreshData();
-      render();
-    });
-  }
+  backend.onAuthChange(async (_event, session) => {
+    state.session = session;
+    state.user = session?.user || null;
+    if (state.user) state.profile = await backend.fetchProfile(state.user.id).catch(() => null);
+    else state.profile = null;
+    await refreshData();
+    render();
+  });
 
   await bootstrapAuth();
   await refreshData();
@@ -234,6 +533,7 @@ function bindHashRouter() {
   window.addEventListener("hashchange", async () => {
     const next = readRouteFromHash();
     state.route = normalizeRoute(next);
+    state.page = 0;
     await refreshData();
     render();
   });
@@ -256,28 +556,14 @@ function normalizeRoute(route) {
 }
 
 async function bootstrapAuth() {
-  if (DEMO_MODE) {
-    const saved = readLocal("cv_demo_user", null);
-    if (saved) {
-      state.user = saved;
-      state.profile = demo.getProfile(saved.id);
-    }
-    return;
-  }
-
-  const { data, error } = await supabase.auth.getSession();
-  if (error) {
-    console.error(error);
-    toast("Errore durante il controllo della sessione.", "error");
-  }
-  state.session = data?.session || null;
-  state.user = data?.session?.user || null;
-  if (state.user) await loadProfile();
+  const session = await backend.restoreSession();
+  if (!session) return;
+  state.user = session.user;
+  state.session = session.session || null;
+  state.profile = session.profile;
 }
 
 async function refreshData() {
-  // Nella pagina di accesso/registrazione non serve leggere subito il feed.
-  // Prima appariva "fetch failed" appena aprivi #/auth, anche prima di cliccare.
   if (!state.user && state.route === "auth") {
     state.reports = [];
     state.likes = new Set();
@@ -286,82 +572,11 @@ async function refreshData() {
   await Promise.all([loadReports(), loadLikes()]);
 }
 
-async function loadProfile() {
-  if (!state.user) return;
-
-  if (DEMO_MODE) {
-    state.profile = demo.getProfile(state.user.id);
-    return;
-  }
-
-  try {
-    const { data, error } = await withRetry(() => supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", state.user.id)
-      .maybeSingle()
-    );
-
-    if (error) throw error;
-
-    if (!data) {
-      await ensureProfileFromAuth(state.user);
-      const { data: created, error: createdError } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("id", state.user.id)
-        .maybeSingle();
-      if (createdError) throw createdError;
-      state.profile = created;
-      return;
-    }
-
-    state.profile = data;
-  } catch (error) {
-    console.error("Errore caricamento profilo", error);
-    toast(niceBackendError(error, "Profilo non caricato."), "error");
-  }
-}
-
 async function loadReports() {
-  if (DEMO_MODE) {
-    state.reports = demo.listReports();
-    return;
-  }
-
   try {
-    // Lettura in due passaggi, senza join PostgREST embedded.
-    // È più solida perché non dipende dal nome della relazione nella cache della relazione dati.
-    const { data: reports, error } = await withRetry(() => supabase
-      .from("segnalazioni")
-      .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
-      .order("created_at", { ascending: false })
-    );
-
-    if (error) throw error;
-
-    const rows = reports || [];
-    const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
-    let profilesById = {};
-
-    if (userIds.length) {
-      const { data: profiles, error: profileError } = await withRetry(() => supabase
-        .from("profiles")
-        .select("id,username,full_name,avatar_url,regione,provincia,comune,bio")
-        .in("id", userIds)
-      );
-
-      if (profileError) {
-        console.warn("Profili autore non caricati", profileError);
-      } else {
-        profilesById = Object.fromEntries((profiles || []).map(profile => [profile.id, profile]));
-      }
-    }
-
-    state.reports = rows.map(report => ({
-      ...report,
-      profiles: profilesById[report.user_id] || null
-    }));
+    const { reports, total } = await backend.fetchReports({ page: state.page });
+    state.reports = reports;
+    state.totalReports = total;
   } catch (error) {
     console.error("Errore lettura segnalazioni", error);
     state.reports = [];
@@ -376,26 +591,14 @@ async function loadLikes() {
     state.likes = new Set();
     return;
   }
-
-  if (DEMO_MODE) {
-    state.likes = demo.getLikes(state.user.id);
-    return;
-  }
-
-  const { data, error } = await withRetry(() => supabase
-    .from("interazioni")
-    .select("segnalazione_id")
-    .eq("utente_id", state.user.id)
-  );
-
-  if (error) {
-    console.error(error);
+  try {
+    state.likes = await backend.fetchLikes(state.user.id);
+  } catch {
     state.likes = new Set();
-    return;
   }
-
-  state.likes = new Set((data || []).map(row => row.segnalazione_id));
 }
+
+// ─── Render principale ────────────────────────────────────────────────────────
 
 function render() {
   if (!state.user && ["auth"].includes(state.route)) return renderAuthPage();
@@ -417,6 +620,8 @@ function render() {
       return renderLanding();
   }
 }
+
+// ─── Landing ──────────────────────────────────────────────────────────────────
 
 function renderLanding() {
   const stats = getStats();
@@ -507,6 +712,8 @@ function renderLanding() {
   bindRouteButtons();
 }
 
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+
 function renderAuthPage(mode = state.authMode || "login") {
   state.authMode = mode;
   app.innerHTML = `
@@ -593,11 +800,10 @@ function registerFormHtml() {
     </form>
   `;
 }
+
+// Demo fast login
 document.addEventListener("click", async (event) => {
-  const fast = event.target.closest("#demo-fast-login");
-  if (fast) {
-    await handleDemoFastLogin();
-  }
+  if (event.target.closest("#demo-fast-login")) await handleDemoFastLogin();
 });
 
 async function handleDemoFastLogin() {
@@ -605,48 +811,41 @@ async function handleDemoFastLogin() {
     toast("Il login demo è disponibile solo se il backend non è configurato.", "warning");
     return;
   }
-  state.user = demo.ensureUser({
-    email: "demo@civicvois.it",
-    password: "civicvois",
-    full_name: "Utente Demo CivicVois",
-    username: "demo",
-    comune: "Verano Brianza"
-  });
-  state.profile = demo.getProfile(state.user.id);
-  writeLocal("cv_demo_user", state.user);
-  await refreshData();
-  toast("Accesso demo effettuato.", "success");
-  setRoute("dashboard");
+  try {
+    const { user, profile } = await backend.register({
+      email: "demo@civicvois.it",
+      password: "civicvois",
+      full_name: "Utente Demo CivicVois",
+      username: "demo",
+      comune: "Verano Brianza",
+      regione: "Lombardia",
+      provincia: "Monza e Brianza"
+    });
+    state.user = user;
+    state.profile = profile;
+    await refreshData();
+    toast("Accesso demo effettuato.", "success");
+    setRoute("dashboard");
+  } catch (error) {
+    console.error(error);
+    toast(error.message || "Accesso demo non riuscito.", "error");
+  }
 }
 
 async function handleLogin(formData) {
   const email = String(formData.get("email") || "").trim().toLowerCase();
   const password = String(formData.get("password") || "");
-
-  if (DEMO_MODE) {
-    const user = demo.login(email, password);
-    if (!user) return toast("Credenziali demo non trovate. Registrati o usa il pulsante demo.", "error");
-    state.user = user;
-    state.profile = demo.getProfile(user.id);
-    writeLocal("cv_demo_user", user);
-    await refreshData();
-    toast("Accesso effettuato.", "success");
-    return setRoute("dashboard");
-  }
-
   try {
-    const { data, error } = await withRetry(() => supabase.auth.signInWithPassword({ email, password }));
-    if (error) return toast(niceBackendError(error, "Accesso non riuscito."), "error");
-    state.session = data.session;
-    state.user = data.user;
-    await ensureProfileFromAuth(data.user);
-    await loadProfile();
+    const { user, session, profile } = await backend.login({ email, password });
+    state.user = user;
+    state.session = session || null;
+    state.profile = profile;
     await refreshData();
     toast("Accesso effettuato.", "success");
     setRoute("dashboard");
   } catch (error) {
     console.error("Errore login", error);
-    toast(niceBackendError(error, "Accesso non riuscito."), "error");
+    toast(error.message || "Accesso non riuscito.", "error");
   }
 }
 
@@ -654,7 +853,6 @@ async function handleRegister(formData) {
   const location = validateLocationSelection(formData);
   if (!location.ok) return toast(location.message, "error");
 
-  const avatarFile = formData.get("avatar_file");
   const payload = {
     full_name: String(formData.get("full_name") || "").trim(),
     username: String(formData.get("username") || "").trim().toLowerCase(),
@@ -664,7 +862,7 @@ async function handleRegister(formData) {
     provincia: location.provincia,
     comune: location.comune,
     bio: clean(formData.get("bio")),
-    avatar_url: ""
+    avatarFile: formData.get("avatar_file")
   };
 
   if (!payload.full_name || !payload.username || !payload.email || payload.password.length < 6) {
@@ -672,71 +870,39 @@ async function handleRegister(formData) {
   }
 
   try {
-    if (DEMO_MODE) {
-      if (avatarFile instanceof File && avatarFile.size > 0) payload.avatar_url = await uploadPhoto(avatarFile, "avatars");
-      const user = demo.ensureUser(payload);
-      state.user = user;
-      state.profile = demo.getProfile(user.id);
-      writeLocal("cv_demo_user", user);
-      await refreshData();
-      toast("Account demo creato.", "success");
-      return setRoute("dashboard");
+    const { user, session, profile, needsConfirm } = await backend.register(payload);
+
+    if (needsConfirm) {
+      toast("Account creato. Ora puoi usare CivicVois.", "success");
+      return renderAuthPage("login");
     }
 
-    const { data, error } = await withRetry(() => supabase.auth.signUp({
-      email: payload.email,
-      password: payload.password,
-      options: {
-        data: {
-          full_name: payload.full_name,
-          username: payload.username,
-          regione: payload.regione,
-          provincia: payload.provincia,
-          comune: payload.comune,
-          bio: payload.bio
-        }
-      }
-    }));
-
-    if (error) return toast(niceBackendError(error, "Registrazione non riuscita."), "error");
-
-    if (data.user && data.session) {
-      state.session = data.session;
-      state.user = data.user;
-      let avatar_url = "";
-      if (avatarFile instanceof File && avatarFile.size > 0) avatar_url = await uploadPhoto(avatarFile, "avatars");
-      await ensureProfileFromAuth(data.user, { ...payload, avatar_url });
-      await loadProfile();
-      await refreshData();
-      toast("Registrazione completata.", "success");
-      return setRoute("dashboard");
-    }
-
-    toast("Account creato. Ora puoi usare CivicVois.", "success");
-    renderAuthPage("login");
+    state.user = user;
+    state.session = session || null;
+    state.profile = profile;
+    await refreshData();
+    toast("Registrazione completata.", "success");
+    setRoute("dashboard");
   } catch (error) {
     console.error("Errore registrazione", error);
-    toast(niceBackendError(error, "Registrazione non riuscita."), "error");
+    toast(error.message || "Registrazione non riuscita.", "error");
   }
 }
-async function handleLogout() {
-  if (DEMO_MODE) {
-    localStorage.removeItem("cv_demo_user");
-    state.user = null;
-    state.profile = null;
-    state.likes = new Set();
-    toast("Logout effettuato.", "success");
-    return setRoute("landing");
-  }
 
-  const { error } = await supabase.auth.signOut();
-  if (error) return toast("Logout non riuscito.", "error");
+async function handleLogout() {
+  try {
+    await backend.logout();
+  } catch { /* ignora */ }
   state.user = null;
+  state.session = null;
   state.profile = null;
   state.likes = new Set();
+  state.reports = [];
   toast("Logout effettuato.", "success");
   setRoute("landing");
 }
+
+// ─── App layout ───────────────────────────────────────────────────────────────
 
 function renderApp(active) {
   app.innerHTML = `
@@ -752,7 +918,11 @@ function renderApp(active) {
       <div>
         <header class="mobile-topbar">
           ${brandHtml()}
-          <button class="icon-btn" id="mobile-logout-btn" title="Logout">↗</button>
+          <button class="icon-btn mobile-logout-btn" title="Esci dall'account" aria-label="Esci">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+          </button>
         </header>
         <main class="main">
           ${active === "dashboard" ? dashboardHtml() : ""}
@@ -773,9 +943,13 @@ function renderApp(active) {
   }
 }
 
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+
 function dashboardHtml() {
   const stats = getStats();
   const filtered = filteredReports();
+  const totalPages = Math.ceil(state.totalReports / PAGE_SIZE);
+  const hasMore = state.page < totalPages - 1;
 
   return `
     <div class="topbar">
@@ -798,27 +972,37 @@ function dashboardHtml() {
     <section class="dashboard-grid">
       <div>
         <div class="filters filters--dashboard">
-          <select class="select" id="filter-comune">
-            <option value="">Tutti i comuni</option>
-            ${uniqueValues(state.reports, "comune").map(v => `<option ${state.filters.comune === v ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}
-          </select>
-          <select class="select" id="filter-tipo">
-            <option value="">Tutte le categorie</option>
-            ${CATEGORIES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.tipo === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
-          </select>
-          <select class="select" id="filter-stato">
-            <option value="">Tutti gli stati</option>
-            ${STATUSES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.stato === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
-          </select>
-          <select class="select" id="filter-sort">
-            <option value="recenti" ${state.filters.sort === "recenti" ? "selected" : ""}>Più recenti</option>
-            <option value="like" ${state.filters.sort === "like" ? "selected" : ""}>Più votate</option>
-            <option value="urgenti" ${state.filters.sort === "urgenti" ? "selected" : ""}>Priorità alta</option>
-          </select>
+          <input class="input filter-search" id="filter-q" type="search" placeholder="🔍 Cerca per titolo, comune, autore…" value="${escapeAttr(state.filters.q)}" />
+          <div class="filters-row">
+            <select class="select" id="filter-comune">
+              <option value="">Tutti i comuni</option>
+              ${uniqueValues(state.reports, "comune").map(v => `<option ${state.filters.comune === v ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}
+            </select>
+            <select class="select" id="filter-tipo">
+              <option value="">Tutte le categorie</option>
+              ${CATEGORIES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.tipo === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
+            </select>
+            <select class="select" id="filter-stato">
+              <option value="">Tutti gli stati</option>
+              ${STATUSES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.stato === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
+            </select>
+            <select class="select" id="filter-sort">
+              <option value="recenti" ${state.filters.sort === "recenti" ? "selected" : ""}>Più recenti</option>
+              <option value="like" ${state.filters.sort === "like" ? "selected" : ""}>Più votate</option>
+              <option value="urgenti" ${state.filters.sort === "urgenti" ? "selected" : ""}>Priorità alta</option>
+            </select>
+          </div>
         </div>
         <div class="feed" id="report-feed">
           ${filtered.length ? filtered.map(reportCardHtml).join("") : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.")}
         </div>
+        ${totalPages > 1 ? `
+          <div class="pagination">
+            <button class="btn btn-soft btn-small" id="page-prev" ${state.page === 0 ? "disabled" : ""}>← Precedente</button>
+            <span class="pagination-info">Pagina ${state.page + 1} di ${totalPages}</span>
+            <button class="btn btn-soft btn-small" id="page-next" ${!hasMore ? "disabled" : ""}>Successiva →</button>
+          </div>
+        ` : ""}
       </div>
 
       <aside class="panel panel-pad">
@@ -834,6 +1018,8 @@ function dashboardHtml() {
     </section>
   `;
 }
+
+// ─── Nuova segnalazione ───────────────────────────────────────────────────────
 
 function newReportHtml() {
   return `
@@ -905,6 +1091,8 @@ function newReportHtml() {
   `;
 }
 
+// ─── Profilo ──────────────────────────────────────────────────────────────────
+
 function profileHtml() {
   const p = state.profile || {};
   const mine = state.reports.filter(r => r.user_id === state.user?.id);
@@ -961,6 +1149,11 @@ function profileHtml() {
           <div class="kpi-card"><b>${likesReceived}</b><span>Like ricevuti</span></div>
           <div class="kpi-card"><b>${mine.filter(r => r.stato === "risolta").length}</b><span>Risolte</span></div>
         </div>
+        <div style="height:16px"></div>
+        <div class="detail-grid">
+          <div class="detail-box"><b>Backend</b><span>${DEMO_MODE ? "Demo locale" : "Netlify Blobs"}</span></div>
+          <div class="detail-box"><b>Territori</b><span>${escapeHtml(state.locationDataSource === "remote" ? "Comuni aggiornati" : state.locationDataSource === "cache" ? "Da cache" : "Fallback locale")}</span></div>
+        </div>
       </aside>
     </section>
 
@@ -972,6 +1165,8 @@ function profileHtml() {
     </section>
   `;
 }
+
+// ─── Admin ────────────────────────────────────────────────────────────────────
 
 function adminHtml() {
   const isAdmin = state.profile?.role === "admin";
@@ -1040,65 +1235,17 @@ function adminCardHtml(r) {
     </article>
   `;
 }
-function settingsHtml() {
-  const p = state.profile || {};
-  return `
-    <div class="topbar"><div><h1>Impostazioni</h1><p>Modifica informazioni personali e preferenze del tuo profilo.</p></div></div>
-    <section class="dashboard-grid settings-grid">
-      <div class="panel">
-        <div class="profile-cover"></div>
-        <div class="profile-head">
-          ${avatarHtml(p, "profile-avatar")}
-          <div>
-            <h2>${escapeHtml(p.full_name || "Utente CivicVois")}</h2>
-            <p>@${escapeHtml(p.username || "utente")} · ${escapeHtml(p.comune || "Comune non impostato")}</p>
-          </div>
-        </div>
-        <div class="panel-pad" style="padding-top:0;">
-          <form id="profile-form" class="form-grid">
-            <div class="field">
-              <label>Nome completo</label>
-              <input class="input" name="full_name" value="${escapeAttr(p.full_name || "")}" required />
-            </div>
-            <div class="field">
-              <label>Username</label>
-              <input class="input" name="username" value="${escapeAttr(p.username || "")}" required />
-            </div>
-            <div class="field span-2">
-              <label>Bio</label>
-              <textarea class="textarea" name="bio" placeholder="Racconta brevemente chi sei.">${escapeHtml(p.bio || "")}</textarea>
-            </div>
-            ${locationFieldsHtml(p, { required: false })}
-            <div class="field span-2">
-              <label>Foto profilo</label>
-              ${avatarUploadHtml(p, "profile")}
-            </div>
-            <div class="span-2" style="display:flex; justify-content:flex-end;"><button class="btn btn-primary" type="submit">Salva impostazioni</button></div>
-          </form>
-        </div>
-      </div>
-      <aside class="panel panel-pad">
-        <h2 class="panel-title">Stato progetto</h2>
-        <p class="panel-subtitle">Controlli tecnici rapidi senza occupare la navbar.</p>
-        <div style="height:16px"></div>
-        <div class="detail-grid">
-          <div class="detail-box"><b>Backend</b><span>${DEMO_MODE ? "Demo locale" : "Netlify Blobs"}</span></div>
-          <div class="detail-box"><b>Hosting</b><span>Compatibile Netlify</span></div>
-          <div class="detail-box"><b>Territori</b><span>${escapeHtml(state.locationDataSource === "remote" ? "Anagrafica comuni caricata" : state.locationDataSource === "cache" ? "Anagrafica comuni da cache" : "Fallback locale")}</span></div>
-        </div>
-        ${DEMO_MODE ? demoNoticeHtml() : `<div class="notice" style="background:var(--success-soft); color:var(--success); border-color:#bbf7d0;"><strong>Backend Netlify collegato</strong>Utenti, segnalazioni, like e immagini vengono salvati online.</div>`}
-      </aside>
-    </section>
-  `;
-}
+
+// ─── Bind eventi app ──────────────────────────────────────────────────────────
 
 function bindAppEvents(active) {
   $("#logout-btn")?.addEventListener("click", handleLogout);
-  $("#mobile-logout-btn")?.addEventListener("click", handleLogout);
+  document.querySelector(".mobile-logout-btn")?.addEventListener("click", handleLogout);
 
   if (active === "dashboard") {
     bindFilters();
     bindReportActions();
+    bindPagination();
   }
 
   if (active === "new") {
@@ -1111,7 +1258,6 @@ function bindAppEvents(active) {
     bindProfileForm();
     bindReportActions();
   }
-
 
   if (active === "admin") {
     bindAdminActions();
@@ -1133,11 +1279,29 @@ function bindFilters() {
       const feed = $("#report-feed");
       if (feed) {
         const list = filteredReports();
-        feed.innerHTML = list.length ? list.map(reportCardHtml).join("") : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.");
+        feed.innerHTML = list.length
+          ? list.map(reportCardHtml).join("")
+          : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.");
         bindReportActions();
         refreshMapMarkers();
       }
     });
+  });
+}
+
+function bindPagination() {
+  $("#page-prev")?.addEventListener("click", async () => {
+    if (state.page <= 0) return;
+    state.page -= 1;
+    await loadReports();
+    render();
+  });
+  $("#page-next")?.addEventListener("click", async () => {
+    const totalPages = Math.ceil(state.totalReports / PAGE_SIZE);
+    if (state.page >= totalPages - 1) return;
+    state.page += 1;
+    await loadReports();
+    render();
   });
 }
 
@@ -1160,6 +1324,8 @@ function bindReportActions() {
     });
   });
 }
+
+// ─── Avatar upload ────────────────────────────────────────────────────────────
 
 function avatarUploadHtml(profile = {}, context = "profile") {
   const src = profile?.avatar_url || "";
@@ -1197,6 +1363,8 @@ function previewAvatar(input, root = document) {
   };
   reader.readAsDataURL(file);
 }
+
+// ─── Location fields ──────────────────────────────────────────────────────────
 
 function locationFieldsHtml(values = {}, options = {}) {
   const required = options.required !== false;
@@ -1340,6 +1508,8 @@ function optionHtml(value, label, selected = "") {
   return `<option value="${escapeAttr(value)}" ${value && value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
 }
 
+// ─── Localizzazione Italia ────────────────────────────────────────────────────
+
 async function loadItalyLocations() {
   for (const source of ITALY_LOCATION_SOURCES) {
     try {
@@ -1393,8 +1563,10 @@ function findCanonical(list, value) {
 }
 function cleanLocationName(value) { return String(value || "").replace(/\s+/g, " ").trim(); }
 function normalizeLocationKey(value) {
-  return cleanLocationName(value).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[’']/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
+  return cleanLocationName(value).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/['']/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
 }
+
+// ─── Form segnalazione ────────────────────────────────────────────────────────
 
 function bindNewReportForm() {
   const form = $("#report-form");
@@ -1504,6 +1676,8 @@ function setInputValue(selector, value) {
   if (el && !el.value) el.value = value;
 }
 
+// ─── CRUD segnalazioni ────────────────────────────────────────────────────────
+
 async function createReport(form) {
   if (!state.user) return setRoute("auth");
 
@@ -1529,7 +1703,8 @@ async function createReport(form) {
     lat: coords?.lat || null,
     lng: coords?.lng || null,
     photo_url: null,
-    like_count: 0
+    like_count: 0,
+    photoFile: photoFile instanceof File && photoFile.size > 0 ? photoFile : null
   };
 
   if (!payload.titolo || !payload.tipo || !payload.descrizione || !payload.comune) {
@@ -1542,24 +1717,14 @@ async function createReport(form) {
       return toast(verified.message || "Via non verificata: controlla l'indirizzo o usa il GPS.", "error");
     }
     if (!coords && verified.lat && verified.lng) {
-      coords = { lat: verified.lat, lng: verified.lng };
       payload.lat = verified.lat;
       payload.lng = verified.lng;
     }
   }
 
   try {
-    if (photoFile instanceof File && photoFile.size > 0) {
-      payload.photo_url = await uploadPhoto(photoFile, "report-photos");
-    }
-
-    if (DEMO_MODE) {
-      demo.addReport(payload);
-    } else {
-      const { error } = await supabase.from("segnalazioni").insert(payload);
-      if (error) throw error;
-    }
-
+    await backend.createReport(payload);
+    state.page = 0;
     await refreshData();
     toast("Segnalazione pubblicata.", "success");
     setRoute("dashboard");
@@ -1569,35 +1734,10 @@ async function createReport(form) {
   }
 }
 
-async function uploadPhoto(file, bucket) {
-  const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
-  if (!validTypes.includes(file.type)) throw new Error("Formato immagine non supportato.");
-  if (file.size > 5 * 1024 * 1024) throw new Error("Immagine troppo grande. Limite consigliato: 5 MB.");
-
-  if (DEMO_MODE) return fileToDataUrl(file);
-
-  const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
-  const path = `${state.user.id}/${crypto.randomUUID()}.${ext}`;
-  const { error } = await supabase.storage.from(bucket).upload(path, file, { cacheControl: "3600", upsert: false });
-  if (error) throw error;
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
-  return data.publicUrl;
-}
-
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = reject;
-    reader.onload = () => resolve(reader.result);
-    reader.readAsDataURL(file);
-  });
-}
-
 async function updateProfile(formData) {
   const location = validateLocationSelection(formData, { allowEmpty: true });
   if (!location.ok) return toast(location.message, "error");
 
-  const avatarFile = formData.get("avatar_file");
   const payload = {
     full_name: clean(formData.get("full_name")),
     username: clean(formData.get("username")).toLowerCase(),
@@ -1606,24 +1746,13 @@ async function updateProfile(formData) {
     provincia: location.provincia,
     comune: location.comune,
     avatar_url: clean(formData.get("avatar_url")),
-    updated_at: new Date().toISOString()
+    avatarFile: formData.get("avatar_file")
   };
 
   if (!payload.full_name || !payload.username) return toast("Nome completo e username sono obbligatori.", "error");
 
   try {
-    if (avatarFile instanceof File && avatarFile.size > 0) {
-      payload.avatar_url = await uploadPhoto(avatarFile, "avatars");
-    }
-
-    if (DEMO_MODE) {
-      demo.updateProfile(state.user.id, payload);
-    } else {
-      const { error } = await supabase.from("profiles").update(payload).eq("id", state.user.id);
-      if (error) throw error;
-    }
-
-    await loadProfile();
+    state.profile = await backend.saveProfile(state.user.id, payload);
     await refreshData();
     toast("Profilo aggiornato.", "success");
     render();
@@ -1632,27 +1761,12 @@ async function updateProfile(formData) {
     toast(error.message || "Profilo non aggiornato.", "error");
   }
 }
+
 async function toggleLike(reportId) {
   if (!state.user) return setRoute("auth");
-  const already = state.likes.has(reportId);
-
+  const alreadyLiked = state.likes.has(reportId);
   try {
-    if (DEMO_MODE) {
-      demo.toggleLike(state.user.id, reportId);
-    } else if (already) {
-      const { error } = await supabase
-        .from("interazioni")
-        .delete()
-        .eq("utente_id", state.user.id)
-        .eq("segnalazione_id", reportId);
-      if (error) throw error;
-    } else {
-      const { error } = await supabase
-        .from("interazioni")
-        .insert({ utente_id: state.user.id, segnalazione_id: reportId });
-      if (error) throw error;
-    }
-
+    await backend.toggleLike(state.user.id, reportId, alreadyLiked);
     await refreshData();
     render();
   } catch (error) {
@@ -1663,29 +1777,18 @@ async function toggleLike(reportId) {
 
 async function updateReportAdmin(id, patch) {
   try {
-    const payload = { ...patch, updated_at: new Date().toISOString() };
-    if (DEMO_MODE) {
-      demo.updateReport(id, payload);
-    } else {
-      const { error } = await supabase.from("segnalazioni").update(payload).eq("id", id);
-      if (error) throw error;
-    }
+    await backend.updateReportAdmin(id, patch);
     await refreshData();
-    toast("Segnalazione aggiornata.", "success");
     render();
   } catch (error) {
     console.error(error);
     toast(error.message || "Segnalazione non aggiornata.", "error");
   }
 }
+
 async function deleteReport(id) {
   try {
-    if (DEMO_MODE) {
-      demo.deleteReport(id);
-    } else {
-      const { error } = await supabase.from("segnalazioni").delete().eq("id", id);
-      if (error) throw error;
-    }
+    await backend.deleteReport(id);
     await refreshData();
     toast("Segnalazione eliminata.", "success");
     render();
@@ -1694,6 +1797,8 @@ async function deleteReport(id) {
     toast(error.message || "Eliminazione non riuscita.", "error");
   }
 }
+
+// ─── Drawer dettaglio ─────────────────────────────────────────────────────────
 
 function openReportDrawer(id) {
   const report = state.reports.find(r => String(r.id) === String(id));
@@ -1745,6 +1850,8 @@ function openReportDrawer(id) {
   });
 }
 
+// ─── Mappa ────────────────────────────────────────────────────────────────────
+
 function initMap() {
   const mapEl = $("#map");
   if (!mapEl || !window.L) return;
@@ -1778,6 +1885,8 @@ function refreshMapMarkers() {
 
   if (bounds.length) state.map.fitBounds(bounds, { padding: [24, 24], maxZoom: 14 });
 }
+
+// ─── Card segnalazione ────────────────────────────────────────────────────────
 
 function reportCardHtml(report) {
   const liked = state.likes.has(report.id);
@@ -1829,6 +1938,8 @@ function activityHtml(report) {
   `;
 }
 
+// ─── Filtri & stats ───────────────────────────────────────────────────────────
+
 function filteredReports() {
   const q = state.filters.q.trim().toLowerCase();
   let list = [...state.reports];
@@ -1855,12 +1966,14 @@ function filteredReports() {
 function getStats() {
   const reports = state.reports;
   return {
-    total: reports.length,
+    total: state.totalReports || reports.length,
     open: reports.filter(r => ["nuova", "verificata"].includes(r.stato)).length,
     inProgress: reports.filter(r => r.stato === "in carico").length,
     resolved: reports.filter(r => r.stato === "risolta").length
   };
 }
+
+// ─── Nav & UI ─────────────────────────────────────────────────────────────────
 
 function navHtml(active) {
   const isAdmin = state.profile?.role === "admin";
@@ -1957,6 +2070,8 @@ function emptyHtml(title, text) {
   return `<div class="empty-state"><strong>${escapeHtml(title)}</strong>${escapeHtml(text)}</div>`;
 }
 
+// ─── Toast ────────────────────────────────────────────────────────────────────
+
 function installGlobalToastStack() {
   if ($(".toast-stack")) return;
   const stack = document.createElement("div");
@@ -1966,7 +2081,6 @@ function installGlobalToastStack() {
 
 function toast(message, type = "") {
   const stack = $(".toast-stack") || document.body.appendChild(Object.assign(document.createElement("div"), { className: "toast-stack" }));
-  // Evita doppioni identici quando init, auth listener e refresh partono quasi insieme.
   const duplicate = Array.from(stack.children).some(child => child.textContent === message);
   if (duplicate) return;
   const el = document.createElement("div");
@@ -1976,12 +2090,10 @@ function toast(message, type = "") {
   setTimeout(() => el.remove(), 5200);
 }
 
+// ─── Utils ────────────────────────────────────────────────────────────────────
+
 function uniqueValues(list, key) {
   return [...new Set(list.map(item => item[key]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-}
-
-function clean(value) {
-  return String(value || "").trim();
 }
 
 function parseCoords(input) {
@@ -2047,6 +2159,20 @@ function readLocal(key, fallback) {
 function writeLocal(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DEMO BACKEND
+//  Usato solo da createDemoAdapter(). Non chiamato direttamente dall'app.
+// ─────────────────────────────────────────────────────────────────────────────
 
 function createDemoBackend() {
   const seed = {
@@ -2141,7 +2267,7 @@ function createDemoBackend() {
           email: payload.email,
           password: payload.password,
           full_name: payload.full_name,
-          username: payload.username,
+          username: payload.username || cleanUsername(payload.email?.split("@")[0] || "utente"),
           regione: payload.regione || "",
           provincia: payload.provincia || "",
           comune: payload.comune || "",
@@ -2165,10 +2291,7 @@ function createDemoBackend() {
     },
     updateProfile(id, payload) {
       const idx = db.users.findIndex(user => user.id === id);
-      if (idx >= 0) {
-        db.users[idx] = { ...db.users[idx], ...payload };
-        save();
-      }
+      if (idx >= 0) { db.users[idx] = { ...db.users[idx], ...payload }; save(); }
     },
     listReports() {
       const byId = Object.fromEntries(db.users.map(u => [u.id, u]));
@@ -2193,6 +2316,7 @@ function createDemoBackend() {
         ...payload,
         id: crypto.randomUUID(),
         profiles: undefined,
+        photo_url: payload.photo_url || "",
         author_name: this.getProfile(payload.user_id)?.full_name || "Utente CivicVois",
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -2201,10 +2325,7 @@ function createDemoBackend() {
     },
     updateReport(id, payload) {
       const idx = db.reports.findIndex(r => r.id === id);
-      if (idx >= 0) {
-        db.reports[idx] = { ...db.reports[idx], ...payload, updated_at: new Date().toISOString() };
-        save();
-      }
+      if (idx >= 0) { db.reports[idx] = { ...db.reports[idx], ...payload, updated_at: new Date().toISOString() }; save(); }
     },
     deleteReport(id) {
       db.reports = db.reports.filter(r => r.id !== id);

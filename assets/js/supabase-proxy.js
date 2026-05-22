@@ -101,6 +101,7 @@ export function createProxySupabaseClient({ supabaseUrl, anonKey }) {
     in(column, values) { this.inFilters.push({ column, values: Array.isArray(values) ? values : [] }); return this; }
     order(column, options = {}) { this.orderBy = { column, ascending: options.ascending !== false }; return this; }
     limit(count) { this.limitCount = count; return this; }
+    range(from, to) { this.rangeFrom = from; this.rangeTo = to; return this; }
     maybeSingle() { this.singleMode = true; return this; }
 
     async execute() {
@@ -114,6 +115,7 @@ export function createProxySupabaseClient({ supabaseUrl, anonKey }) {
           inFilters: this.inFilters,
           orderBy: this.orderBy,
           limit: this.limitCount,
+          range: this.rangeFrom != null ? { from: this.rangeFrom, to: this.rangeTo } : null,
           single: this.singleMode,
           payload: this.payload,
           onConflict: this.onConflict,
