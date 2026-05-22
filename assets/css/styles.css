@@ -902,7 +902,7 @@ img { display: block; max-width: 100%; }
 .mobile-topbar {
   display: none;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   padding: 10px 16px;
   position: sticky;
   top: 0;
@@ -917,12 +917,6 @@ img { display: block; max-width: 100%; }
 .mobile-topbar .brand { color: var(--text); }
 .mobile-topbar .brand-name  { color: var(--text); }
 .mobile-topbar .brand-subtitle { color: var(--text-3); }
-
-.mobile-topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .hamburger-btn {
   width: 38px;
