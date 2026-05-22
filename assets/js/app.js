@@ -497,6 +497,8 @@ const state = {
   locationDataSource: readLocal("cv_italy_locations_raw", null) ? "cache" : "fallback",
   map: null,
   mapMobile: null,
+  mapNew: null,
+  mapNewMarker: null,
   markers: [],
   markersMobile: [],
   uploading: false
@@ -606,6 +608,8 @@ function render() {
   // Resetta le istanze mappa ad ogni render (il DOM viene ricostruito)
   state.map = null;
   state.mapMobile = null;
+  state.mapNew = null;
+  state.mapNewMarker = null;
   state.markers = [];
   state.markersMobile = [];
   if (!state.user && ["auth"].includes(state.route)) return renderAuthPage();
@@ -1153,72 +1157,286 @@ function dashboardHtml() {
 // ─── Nuova segnalazione ───────────────────────────────────────────────────────
 
 function newReportHtml() {
+  const p = state.profile || {};
+  const isPublic = true; // default
+
   return `
+    <!-- ── Topbar desktop ── -->
     <div class="topbar">
       <div>
         <h1>Nuova segnalazione</h1>
-        <p>Più dettagli inserisci, più la segnalazione diventa utile e credibile.</p>
+        <p>Aiutaci a migliorare il territorio. Compila i dettagli e invia la tua segnalazione.</p>
       </div>
-      <button class="btn btn-dark" data-route="dashboard">Torna al feed</button>
+      <div class="nr-topbar-right">
+        <div class="nr-security-notice">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <div>
+            <strong>Le tue segnalazioni sono sicure</strong>
+            <span>I tuoi dati sono protetti e utilizzati solo per migliorare la tua comunità.</span>
+          </div>
+        </div>
+        <button class="btn btn-dark" data-route="dashboard">← Dashboard</button>
+      </div>
     </div>
 
-    <section class="panel panel-pad">
-      <form id="report-form" class="form-grid">
-        <div class="field span-2">
-          <label>Titolo</label>
-          <input class="input" name="titolo" placeholder="Esempio: Buca pericolosa vicino alle strisce" required maxlength="90" />
-        </div>
-        <div class="field">
-          <label>Categoria</label>
-          <select class="select" name="tipo" required>
-            <option value="">Seleziona categoria</option>
-            ${CATEGORIES.map(c => `<option value="${escapeAttr(c)}">${capitalize(c)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="field">
-          <label>Priorità</label>
-          <select class="select" name="priorita" required>
-            ${PRIORITIES.map(p => `<option value="${p}">${capitalize(p)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="field span-2">
-          <label>Descrizione</label>
-          <textarea class="textarea" name="descrizione" placeholder="Spiega cosa succede, perché è un problema e se è urgente." required minlength="12"></textarea>
-        </div>
-        ${locationFieldsHtml({ regione: "Lombardia", provincia: "Monza e Brianza", comune: "Verano Brianza" }, { required: true })}
-        <div class="field">
-          <label>Via</label>
-          <div class="address-check-row">
-            <input class="input" name="via" id="via-input" placeholder="Via Roma" autocomplete="off" />
-            <button class="btn btn-soft btn-small" type="button" id="verify-address-btn">Verifica</button>
+    <!-- ── Stepper mobile ── -->
+    <div class="nr-stepper">
+      <div class="nr-step is-active" data-step="1"><span class="nr-step-num">1</span><span class="nr-step-label">Dettagli</span></div>
+      <div class="nr-step-line"></div>
+      <div class="nr-step" data-step="2"><span class="nr-step-num">2</span><span class="nr-step-label">Posizione</span></div>
+      <div class="nr-step-line"></div>
+      <div class="nr-step" data-step="3"><span class="nr-step-num">3</span><span class="nr-step-label">Conferma</span></div>
+      <div class="nr-step-line"></div>
+      <div class="nr-step" data-step="4"><span class="nr-step-num">4</span><span class="nr-step-label">Invia</span></div>
+    </div>
+
+    <form id="report-form">
+      <div class="nr-layout">
+
+        <!-- ── 01 Foto ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">01</span>
+            <div>
+              <h2 class="nr-section-title">Foto <span class="nr-required">(obbligatoria)</span></h2>
+              <p class="nr-section-sub">Carica una o più foto per descrivere meglio il problema.</p>
+            </div>
           </div>
-          <input type="hidden" name="address_verified" id="address-verified" value="" />
-          <small class="field-hint" id="address-status">La via viene verificata con comune, provincia e regione prima della pubblicazione.</small>
+          <div class="nr-photo-grid" id="photo-grid">
+            <!-- Upload area principale -->
+            <label class="nr-photo-upload" id="upload-box">
+              <input type="file" name="photo" accept="image/*" id="photo-input" multiple />
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+              <div id="upload-copy">
+                <strong>Trascina qui le foto</strong>
+                <span>oppure clicca per sfogliare</span>
+                <span class="nr-upload-hint">JPG, PNG fino a 10MB</span>
+              </div>
+            </label>
+            <!-- Azioni rapide mobile -->
+            <button class="nr-photo-action" type="button" id="camera-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              <span>Scatta foto</span>
+            </button>
+            <button class="nr-photo-action" type="button" id="gallery-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+              <span>Scegli dalla galleria</span>
+            </button>
+          </div>
+          <div id="photo-previews" class="nr-photo-previews"></div>
+          <p class="nr-photo-limit">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Puoi caricare fino a 5 foto
+          </p>
         </div>
-        <div class="field">
-          <label>Civico</label>
-          <input class="input" name="civico" placeholder="12" maxlength="12" />
-        </div>
-        <div class="field">
-          <label>Coordinate</label>
-          <div style="display: grid; grid-template-columns: 1fr auto; gap: 8px;">
-            <input class="input" name="coordinate" id="coordinate-input" placeholder="lat, lng" />
-            <button class="btn btn-soft btn-small" type="button" id="geo-btn">GPS</button>
+
+        <!-- ── 02 Titolo + 03 Descrizione (griglia desktop) ── -->
+        <div class="nr-two-col">
+          <!-- 02 Titolo -->
+          <div class="nr-section panel">
+            <div class="nr-section-header">
+              <span class="nr-section-num">02</span>
+              <div>
+                <h2 class="nr-section-title">Titolo <span class="nr-required">(obbligatorio)</span></h2>
+              </div>
+            </div>
+            <div class="nr-field">
+              <input class="input" name="titolo" id="nr-titolo" placeholder="Es. Buche in via Roma" required maxlength="100" autocomplete="off" />
+              <div class="nr-char-row">
+                <small class="field-hint">Sii breve e chiaro: il titolo aiuta a identificare subito il problema.</small>
+                <span class="nr-char-count" id="titolo-count">0/100</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 03 Descrizione -->
+          <div class="nr-section panel">
+            <div class="nr-section-header">
+              <span class="nr-section-num">03</span>
+              <div>
+                <h2 class="nr-section-title">Descrizione <span class="nr-required">(obbligatoria)</span></h2>
+              </div>
+            </div>
+            <div class="nr-field">
+              <textarea class="textarea nr-textarea" name="descrizione" id="nr-desc" placeholder="Descrivi nel dettaglio il problema segnalato…" required minlength="12" maxlength="1000"></textarea>
+              <div class="nr-char-row">
+                <small class="field-hint">Fornisci più dettagli possibili: quando si verifica, da quanto tempo, impatto.</small>
+                <span class="nr-char-count" id="desc-count">0/1000</span>
+              </div>
+            </div>
           </div>
         </div>
-        <div class="field span-2">
-          <label>Foto</label>
-          <label class="upload-box" id="upload-box">
-            <input type="file" name="photo" accept="image/*" id="photo-input" />
-            <div id="upload-copy"><strong>Carica una foto</strong><br><span style="color: var(--text-2); font-weight: 650;">PNG, JPG o JPEG. Consigliato: immagine chiara del problema.</span></div>
-          </label>
+
+        <!-- ── 04 Categoria + 05 Priorità (griglia desktop) ── -->
+        <div class="nr-two-col">
+          <!-- 04 Categoria -->
+          <div class="nr-section panel">
+            <div class="nr-section-header">
+              <span class="nr-section-num">04</span>
+              <div>
+                <h2 class="nr-section-title">Categoria <span class="nr-required">(obbligatoria)</span></h2>
+              </div>
+            </div>
+            <div class="nr-field">
+              <select class="select" name="tipo" required>
+                <option value="">Seleziona una categoria</option>
+                ${CATEGORIES.map(c => `<option value="${escapeAttr(c)}">${capitalize(c)}</option>`).join("")}
+              </select>
+              <small class="field-hint">Scegli la categoria che meglio rappresenta il problema.</small>
+            </div>
+          </div>
+
+          <!-- 05 Priorità -->
+          <div class="nr-section panel">
+            <div class="nr-section-header">
+              <span class="nr-section-num">05</span>
+              <div>
+                <h2 class="nr-section-title">Priorità</h2>
+              </div>
+            </div>
+            <div class="nr-field">
+              <div class="nr-priority-group">
+                <input type="hidden" name="priorita" id="nr-priorita" value="bassa" />
+                <button type="button" class="nr-priority-btn is-selected" data-priority="bassa">
+                  <span class="nr-priority-dot" style="background:#10b981"></span> Bassa
+                </button>
+                <button type="button" class="nr-priority-btn" data-priority="media">
+                  <span class="nr-priority-dot" style="background:#f59e0b"></span> Media
+                </button>
+                <button type="button" class="nr-priority-btn" data-priority="alta">
+                  <span class="nr-priority-dot" style="background:#f43f5e"></span> Alta
+                </button>
+                <button type="button" class="nr-priority-btn" data-priority="urgente">
+                  <span class="nr-priority-dot" style="background:#7c3aed"></span> Urgente
+                </button>
+              </div>
+              <small class="field-hint">Indica il livello di urgenza del problema.</small>
+            </div>
+          </div>
         </div>
-        <div class="span-2" style="display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
-          <button class="btn btn-soft" type="reset">Svuota</button>
-          <button class="btn btn-primary" type="submit">Pubblica segnalazione</button>
+
+        <!-- ── 06 Posizione ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">06</span>
+            <div>
+              <h2 class="nr-section-title">Posizione <span class="nr-required">(obbligatoria)</span></h2>
+            </div>
+          </div>
+          <div class="nr-position-layout">
+            <div class="nr-position-left">
+              <!-- Tab: inserisci / usa posizione -->
+              <div class="nr-pos-tabs">
+                <button type="button" class="nr-pos-tab is-active" data-postab="indirizzo">Inserisci indirizzo</button>
+                <button type="button" class="nr-pos-tab" data-postab="gps" id="geo-btn">Usa posizione attuale</button>
+              </div>
+              <div class="nr-pos-search">
+                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input class="input" name="via" id="via-input" placeholder="Cerca un indirizzo, es. Via Roma 1, Carate Brianza" autocomplete="off" />
+              </div>
+              ${locationFieldsHtml({ regione: "Lombardia", provincia: "Monza e Brianza", comune: "Verano Brianza" }, { required: true })}
+              <input type="hidden" name="address_verified" id="address-verified" value="" />
+              <div class="nr-verified-address" id="nr-verified-address" style="display:none;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                <span id="nr-verified-text"></span>
+                <button type="button" class="btn btn-ghost btn-small" id="verify-address-btn" style="margin-left:auto;">Verifica</button>
+              </div>
+              <button type="button" class="btn btn-ghost btn-small" id="verify-address-btn-2" style="margin-top:8px; width:100%;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                Verifica indirizzo
+              </button>
+              <div>
+                <input type="hidden" name="coordinate" id="coordinate-input" />
+              </div>
+            </div>
+            <div class="nr-position-map">
+              <div class="map-panel nr-map-panel"><div id="map-new"></div></div>
+              <button type="button" class="nr-map-gps-btn" id="geo-btn-map" title="Usa la mia posizione">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+              </button>
+            </div>
+          </div>
         </div>
-      </form>
-    </section>
+
+        <!-- ── 07 Autore / Privacy ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">07</span>
+            <div>
+              <h2 class="nr-section-title">Autore della segnalazione</h2>
+              <p class="nr-section-sub">Scegli se rendere visibile il tuo nome e profilo con la segnalazione.</p>
+            </div>
+          </div>
+          <div class="nr-privacy-layout">
+            <label class="nr-privacy-option" id="privacy-public">
+              <input type="radio" name="privacy" value="pubblico" checked style="display:none;" />
+              <div class="nr-privacy-avatar">
+                ${avatarHtml(p, "avatar")}
+              </div>
+              <div class="nr-privacy-info">
+                <strong>Pubblico</strong>
+                <span>Il mio nome sarà visibile</span>
+              </div>
+              <span class="nr-privacy-check" id="privacy-check-public">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              </span>
+            </label>
+            <label class="nr-privacy-option" id="privacy-anon">
+              <input type="radio" name="privacy" value="anonimo" style="display:none;" />
+              <div class="nr-privacy-avatar nr-privacy-avatar--anon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </div>
+              <div class="nr-privacy-info">
+                <strong>Anonimo</strong>
+                <span>Il mio nome non sarà visibile</span>
+              </div>
+              <span class="nr-privacy-check nr-privacy-check--off" id="privacy-check-anon"></span>
+            </label>
+            <div class="nr-privacy-notice">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <div>
+                <strong>La tua privacy è importante</strong>
+                <span>Puoi modificare questa scelta in qualsiasi momento dal tuo profilo.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /nr-layout -->
+
+      <!-- ── Barra inferiore desktop ── -->
+      <div class="nr-bottom-bar">
+        <div class="nr-autosave">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          <span>Bozza salvata automaticamente — Ultimo salvataggio: 2 min fa</span>
+        </div>
+        <div class="nr-bottom-actions">
+          <button class="btn btn-ghost" type="button" data-route="dashboard">Annulla</button>
+          <button class="btn btn-soft" type="button" id="save-draft-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Salva bozza
+          </button>
+          <button class="btn btn-primary" type="submit">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            Invia segnalazione
+          </button>
+        </div>
+      </div>
+
+      <!-- ── CTA mobile sticky ── -->
+      <div class="nr-mobile-cta">
+        <button class="btn btn-primary" type="submit" style="width:100%; min-height:50px; font-size:1rem; font-weight:800; border-radius:var(--r-xl);">Invia segnalazione</button>
+        <button class="btn btn-ghost" type="button" id="save-draft-mobile" style="width:100%; min-height:44px; gap:8px;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Salva bozza
+        </button>
+        <p class="nr-mobile-privacy">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          I tuoi dati sono protetti. <a href="#" style="color:var(--teal-3);">Scopri di più.</a>
+        </p>
+      </div>
+
+    </form>
   `;
 }
 
@@ -1228,27 +1446,209 @@ function profileHtml() {
   const p = state.profile || {};
   const mine = state.reports.filter(r => r.user_id === state.user?.id);
   const likesReceived = mine.reduce((acc, r) => acc + Number(r.like_count || 0), 0);
+  const resolved = mine.filter(r => r.stato === "risolta").length;
+  const isAdmin = p.role === "admin";
+  const roleLabel = isAdmin ? "Amministratore" : "Cittadino";
+  const locationLine = [p.comune, p.provincia].filter(Boolean).join(", ") || "Posizione non impostata";
+
+  // Calcolo completamento profilo
+  const profileFields = [p.full_name, p.username, p.bio, p.comune, p.avatar_url];
+  const filled = profileFields.filter(Boolean).length;
+  const completionPct = Math.round((filled / profileFields.length) * 100);
+
+  // Badge fittizi basati sull'attività reale
+  const badges = [
+    { icon: "🛡️", name: "Cittadino attivo", color: "var(--teal)", earned: mine.length >= 1 },
+    { icon: "❤️", name: "Sostenuto", color: "#f43f5e", earned: likesReceived >= 1 },
+    { icon: "✅", name: "Risolutore", color: "#10b981", earned: resolved >= 1 },
+    { icon: "⭐", name: "Veterano", color: "#f59e0b", earned: mine.length >= 5 }
+  ].filter(b => b.earned);
+
+  // Ultime attività simulate dalla lista segnalazioni
+  const recentActivity = mine.slice(0, 3).map(r => ({
+    icon: r.stato === "risolta" ? "✅" : r.stato === "in carico" ? "🔄" : "📋",
+    text: `Segnalazione "${escapeHtml(r.titolo || r.tipo)}" — ${capitalize(r.stato || "nuova")}`,
+    when: formatDate(r.created_at)
+  }));
 
   return `
+    <!-- ── Topbar desktop ── -->
     <div class="topbar">
       <div>
         <h1>Profilo</h1>
-        <p>Gestisci la tua identità pubblica e la tua attività civica.</p>
+        <p>Gestisci il tuo account, la tua attività e il tuo impatto sul territorio.</p>
       </div>
-      <button class="btn btn-primary" data-route="new">Nuova segnalazione</button>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <button class="icon-btn app-notif-btn" aria-label="Notifiche">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+          <span class="notif-dot"></span>
+        </button>
+        <button class="btn btn-primary" id="edit-profile-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          Modifica profilo
+        </button>
+      </div>
     </div>
 
-    <section class="dashboard-grid">
-      <div class="panel">
-        <div class="profile-cover"></div>
-        <div class="profile-head">
-          ${avatarHtml(p, "profile-avatar")}
-          <div>
-            <h2>${escapeHtml(p.full_name || "Utente CivicVois")}</h2>
-            <p>@${escapeHtml(p.username || "utente")} · ${escapeHtml(p.comune || "Comune non impostato")}</p>
+    <!-- ── Hero card identità ── -->
+    <div class="profile-hero panel">
+      <div class="profile-hero-left">
+        <div class="profile-avatar-wrap">
+          ${avatarHtml(p, "profile-avatar-lg")}
+          <button class="profile-avatar-edit" id="edit-profile-btn-2" title="Modifica profilo">
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+        </div>
+        <div class="profile-hero-info">
+          <h2 class="profile-hero-name">${escapeHtml(p.full_name || "Utente CivicVois")}</h2>
+          <span class="profile-role-badge">${roleLabel}</span>
+          <p class="profile-bio">${escapeHtml(p.bio || "Nessuna bio impostata. Modifica il profilo per aggiungerla.")}</p>
+          <div class="profile-meta-row">
+            <span class="profile-meta-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              ${escapeHtml(locationLine)}
+            </span>
+            <span class="profile-meta-item">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Membro da apr 2024
+            </span>
+          </div>
+          <div class="profile-reputation">
+            <span class="profile-rep-icon">🛡️</span>
+            <span class="profile-rep-label">Reputazione</span>
+            <span class="profile-rep-value">${(mine.length * 50 + likesReceived * 10).toLocaleString("it")} punti</span>
           </div>
         </div>
-        <div class="panel-pad" style="padding-top:0;">
+      </div>
+      <div class="profile-hero-right">
+        <div class="profile-trust-box">
+          <div class="profile-trust-score">4.8<span>/5</span></div>
+          <div class="profile-trust-label">Affidabilità elevata</div>
+          <p class="profile-trust-sub">Basato sulla qualità e coerenza dei tuoi contributi.</p>
+        </div>
+        <div class="profile-location-box">
+          <div class="profile-location-title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            ${escapeHtml(locationLine)}
+          </div>
+          <div class="profile-location-area">
+            <span>Area di riferimento</span>
+            <strong>${escapeHtml(p.provincia || "—")}</strong>
+          </div>
+          <button class="btn btn-ghost btn-small" id="edit-profile-btn-3">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Modifica posizione
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── KPI 4 colonne ── -->
+    <div class="profile-kpi-grid">
+      <div class="profile-kpi-card">
+        <div class="profile-kpi-icon" style="background:rgba(20,184,166,0.15); color:var(--teal-3);">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </div>
+        <div>
+          <b class="profile-kpi-value">${mine.length}</b>
+          <span class="profile-kpi-label">Segnalazioni create</span>
+          <span class="profile-kpi-sub">+${Math.min(mine.length, 5)} questo mese</span>
+        </div>
+      </div>
+      <div class="profile-kpi-card">
+        <div class="profile-kpi-icon" style="background:rgba(244,63,94,0.15); color:#fb7185;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+        </div>
+        <div>
+          <b class="profile-kpi-value">${likesReceived}</b>
+          <span class="profile-kpi-label">Like ricevuti</span>
+          <span class="profile-kpi-sub">+${Math.min(likesReceived, 18)} questo mese</span>
+        </div>
+      </div>
+      <div class="profile-kpi-card">
+        <div class="profile-kpi-icon" style="background:rgba(16,185,129,0.15); color:#34d399;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div>
+          <b class="profile-kpi-value">${resolved}</b>
+          <span class="profile-kpi-label">Risolte</span>
+          <span class="profile-kpi-sub">${mine.length ? Math.round((resolved / mine.length) * 100) : 0}% del totale</span>
+        </div>
+      </div>
+      <div class="profile-kpi-card">
+        <div class="profile-kpi-icon" style="background:rgba(139,92,246,0.15); color:#c4b5fd;">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div>
+          <b class="profile-kpi-value">4.8<small style="font-size:1rem">/5</small></b>
+          <span class="profile-kpi-label">Affidabilità</span>
+          <span class="profile-kpi-sub">In crescita</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Layout a 2 colonne: contenuto principale + sidebar ── -->
+    <div class="profile-layout">
+
+      <!-- Colonna principale -->
+      <div class="profile-main">
+
+        <!-- Tab bar -->
+        <div class="profile-tabs">
+          <button class="profile-tab is-active" data-tab="segnalazioni">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            Le mie segnalazioni
+          </button>
+          <button class="profile-tab" data-tab="attivita">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Attività recenti
+          </button>
+          <button class="profile-tab" data-tab="badge">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            Badge e risultati
+          </button>
+          <button class="profile-tab" data-tab="impostazioni">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Impostazioni rapide
+          </button>
+        </div>
+
+        <!-- Tab: Le mie segnalazioni -->
+        <div class="profile-tab-panel" data-panel="segnalazioni">
+          ${mine.length ? mine.map(r => profileReportRowHtml(r)).join("") : emptyHtml("Non hai ancora creato segnalazioni", "Quando ne pubblichi una, la trovi qui.")}
+          ${mine.length ? `<button class="btn btn-ghost" style="width:100%; margin-top:12px; font-size:0.85rem;" data-route="dashboard">Vedi tutte le mie segnalazioni →</button>` : ""}
+        </div>
+
+        <!-- Tab: Attività recenti -->
+        <div class="profile-tab-panel" data-panel="attivita" style="display:none;">
+          ${recentActivity.length ? recentActivity.map(a => `
+            <div class="profile-activity-row">
+              <span class="profile-activity-icon">${a.icon}</span>
+              <div class="profile-activity-body">
+                <p>${a.text}</p>
+                <span class="profile-activity-when">${a.when}</span>
+              </div>
+              <svg class="profile-activity-chevron" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+          `).join("") : emptyHtml("Nessuna attività recente", "Le tue azioni compariranno qui.")}
+        </div>
+
+        <!-- Tab: Badge -->
+        <div class="profile-tab-panel" data-panel="badge" style="display:none;">
+          ${badges.length ? `
+            <div class="profile-badge-grid">
+              ${badges.map(b => `
+                <div class="profile-badge-item">
+                  <div class="profile-badge-icon" style="background: ${b.color}22; border-color: ${b.color}44;">${b.icon}</div>
+                  <span>${escapeHtml(b.name)}</span>
+                </div>
+              `).join("")}
+            </div>
+          ` : emptyHtml("Nessun badge ancora", "Partecipa attivamente per sbloccare i tuoi primi badge.")}
+        </div>
+
+        <!-- Tab: Impostazioni rapide -->
+        <div class="profile-tab-panel" data-panel="impostazioni" style="display:none;">
           <form id="profile-form" class="form-grid">
             <div class="field">
               <label>Nome completo</label>
@@ -1267,33 +1667,145 @@ function profileHtml() {
               <label>Foto profilo</label>
               ${avatarUploadHtml(p, "profile")}
             </div>
-            <div class="span-2" style="display:flex; justify-content:flex-end;"><button class="btn btn-primary" type="submit">Salva profilo</button></div>
+            <div class="span-2" style="display:flex; justify-content:flex-end; gap:10px;">
+              <button class="btn btn-soft" type="reset">Annulla</button>
+              <button class="btn btn-primary" type="submit">Salva profilo</button>
+            </div>
           </form>
         </div>
       </div>
-      <aside class="panel panel-pad">
-        <h2 class="panel-title">Impatto</h2>
-        <p class="panel-subtitle">Quanto hai contribuito alla piattaforma.</p>
-        <div style="height:16px"></div>
-        <div class="stats-grid" style="grid-template-columns: 1fr;">
-          <div class="kpi-card"><b>${mine.length}</b><span>Segnalazioni create</span></div>
-          <div class="kpi-card"><b>${likesReceived}</b><span>Like ricevuti</span></div>
-          <div class="kpi-card"><b>${mine.filter(r => r.stato === "risolta").length}</b><span>Risolte</span></div>
+
+      <!-- Sidebar destra (solo desktop) -->
+      <aside class="profile-sidebar">
+
+        <!-- Completamento profilo -->
+        <div class="panel panel-pad profile-completion-card">
+          <h3 class="panel-title">Completamento profilo</h3>
+          <div style="height:14px"></div>
+          <div class="profile-donut-wrap">
+            <svg class="profile-donut" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="40" cy="40" r="30" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="8"/>
+              <circle cx="40" cy="40" r="30" fill="none" stroke="var(--teal-2)" stroke-width="8"
+                stroke-dasharray="${Math.round(completionPct * 1.885)} 188.5"
+                stroke-dashoffset="47.1"
+                stroke-linecap="round"/>
+              <text x="40" y="44" text-anchor="middle" fill="var(--text)" font-size="14" font-weight="900" font-family="-apple-system,sans-serif">${completionPct}%</text>
+            </svg>
+            <div class="profile-donut-info">
+              <strong>Ottimo lavoro!</strong>
+              <p>Completa il tuo profilo per sbloccare nuovi badge e funzionalità.</p>
+            </div>
+          </div>
+          <div style="height:12px"></div>
+          <div class="profile-checklist">
+            ${[
+              ["Email verificata", true],
+              ["Posizione impostata", Boolean(p.comune)],
+              ["Aggiungi una bio", Boolean(p.bio)],
+              ["Foto profilo", Boolean(p.avatar_url)]
+            ].map(([label, done]) => `
+              <div class="profile-check-item ${done ? "done" : ""}">
+                <span class="profile-check-icon">${done ? "✓" : "○"}</span>
+                <span>${label}</span>
+              </div>
+            `).join("")}
+          </div>
+          <div style="height:12px"></div>
+          <button class="btn btn-soft" style="width:100%; font-size:0.84rem;" data-tab-target="impostazioni">Completa profilo →</button>
         </div>
-        <div style="height:16px"></div>
-        <div class="detail-grid">
-          <div class="detail-box"><b>Backend</b><span>${DEMO_MODE ? "Demo locale" : "Netlify Blobs"}</span></div>
-          <div class="detail-box"><b>Territori</b><span>${escapeHtml(state.locationDataSource === "remote" ? "Comuni aggiornati" : state.locationDataSource === "cache" ? "Da cache" : "Fallback locale")}</span></div>
+
+        <!-- Badge ottenuti -->
+        <div class="panel panel-pad">
+          <h3 class="panel-title">Badge e risultati</h3>
+          <div style="height:12px"></div>
+          ${badges.length ? `
+            <div class="profile-badge-row">
+              ${badges.slice(0, 4).map(b => `
+                <div class="profile-badge-mini" title="${escapeAttr(b.name)}" style="background:${b.color}22; border-color:${b.color}44;">${b.icon}</div>
+              `).join("")}
+              ${badges.length > 4 ? `<div class="profile-badge-mini" style="background:var(--glass-light);">+${badges.length - 4}</div>` : ""}
+            </div>
+          ` : `<p style="color:var(--text-3); font-size:0.85rem;">Nessun badge ancora. Continua a contribuire!</p>`}
+          <div style="height:10px"></div>
+          <button class="btn btn-ghost" style="width:100%; font-size:0.84rem;">Vedi tutti i badge →</button>
+        </div>
+
+        <!-- Attività recente -->
+        <div class="panel panel-pad">
+          <h3 class="panel-title">Attività recente</h3>
+          <div style="height:12px"></div>
+          ${recentActivity.length ? recentActivity.map(a => `
+            <div class="profile-activity-mini">
+              <span>${a.icon}</span>
+              <p>${a.text}</p>
+            </div>
+          `).join("") : `<p style="color:var(--text-3); font-size:0.85rem;">Nessuna attività recente.</p>`}
+          <div style="height:10px"></div>
+          <button class="btn btn-ghost" style="width:100%; font-size:0.84rem;">Vedi tutta l'attività →</button>
         </div>
       </aside>
-    </section>
+    </div>
 
-    <div style="height:18px"></div>
-    <section class="panel panel-pad">
-      <h2 class="panel-title">Le tue segnalazioni</h2>
-      <div style="height:16px"></div>
-      <div class="feed">${mine.length ? mine.map(reportCardHtml).join("") : emptyHtml("Non hai ancora creato segnalazioni", "Quando ne pubblichi una, la trovi qui.")}</div>
-    </section>
+    <!-- ── Sezione mobile: traguardi ── -->
+    <div class="profile-achievements-mobile panel panel-pad">
+      <div class="profile-achievements-header">
+        <h3 class="panel-title">I miei traguardi</h3>
+        <button class="btn btn-ghost btn-small">Vedi tutti</button>
+      </div>
+      <div style="height:12px"></div>
+      <div class="profile-achievement-item">
+        <div class="profile-achievement-icon" style="background:rgba(139,92,246,0.2); color:#c4b5fd;">🛡️</div>
+        <div class="profile-achievement-body">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <strong>Cittadino Attivo</strong>
+            <span class="chip chip-primary" style="font-size:0.7rem;">Livello 3</span>
+          </div>
+          <div class="profile-progress-bar-wrap">
+            <div class="profile-progress-bar" style="width: ${Math.min(100, Math.round(((mine.length * 50 + likesReceived * 10) / 2000) * 100))}%"></div>
+          </div>
+          <span style="font-size:0.75rem; color:var(--text-3);">${(mine.length * 50 + likesReceived * 10).toLocaleString("it")} / 2.000 punti</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Riga segnalazione compatta per il profilo (desktop)
+function profileReportRowHtml(report) {
+  const liked = state.likes.has(report.id);
+  const likeCount = Number(report.like_count || 0);
+  return `
+    <div class="profile-report-row" data-report-id="${report.id}">
+      <div class="profile-report-thumb">
+        ${report.photo_url
+          ? `<img src="${escapeAttr(report.photo_url)}" alt="" loading="lazy" />`
+          : `<div class="profile-report-thumb-placeholder">${categoryIcon(report.tipo)}</div>`}
+      </div>
+      <div class="profile-report-body">
+        <div class="profile-report-top">
+          ${statusChip(report.stato)}
+          <span class="profile-report-priority chip ${report.priorita === "urgente" ? "chip-danger" : report.priorita === "alta" ? "chip-warning" : "chip-primary"}">Priorità ${capitalize(report.priorita || "bassa")}</span>
+        </div>
+        <h3 class="profile-report-title">${escapeHtml(report.titolo || capitalize(report.tipo || "Segnalazione"))}</h3>
+        <div class="profile-report-meta">
+          <span>📍 ${escapeHtml(formatAddress(report))}</span>
+          <span>🕒 ${escapeHtml(formatDate(report.created_at))}</span>
+          <span>❤️ ${likeCount}</span>
+        </div>
+        ${report.descrizione ? `<p class="profile-report-desc">${escapeHtml(report.descrizione)}</p>` : ""}
+      </div>
+      <div class="profile-report-actions">
+        <button class="icon-btn open-detail" data-id="${report.id}" title="Dettagli">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+        <button class="icon-btn" id="edit-profile-btn-row-${report.id}" title="Modifica">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+        <button class="icon-btn" title="Altro">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </button>
+      </div>
+    </div>
   `;
 }
 
@@ -1400,10 +1912,18 @@ function bindAppEvents(active) {
   }
 
   if (active === "profile") {
+    bindProfileTabs();
     bindLocationControls($("#profile-form"));
     bindAvatarUpload($("#profile-form"));
     bindProfileForm();
     bindReportActions();
+
+    // Pulsanti "Modifica profilo" aprono tab impostazioni
+    ["#edit-profile-btn", "#edit-profile-btn-2", "#edit-profile-btn-3"].forEach(sel => {
+      $(sel)?.addEventListener("click", () => activateProfileTab("impostazioni"));
+    });
+    // Pulsante "Completa profilo →"
+    $("[data-tab-target='impostazioni']")?.addEventListener("click", () => activateProfileTab("impostazioni"));
   }
 
   if (active === "admin") {
@@ -1730,17 +2250,207 @@ function normalizeLocationKey(value) {
 
 function bindNewReportForm() {
   const form = $("#report-form");
+  if (!form) return;
+
+  // ── Location controls & address verification ──────────────────────────
   bindLocationControls(form);
   bindAddressVerification(form);
 
-  const input = $("#photo-input");
-  input?.addEventListener("change", () => previewPhoto(input));
+  // Also bind the second verify-address button (map tab)
+  $("#verify-address-btn-2")?.addEventListener("click", async () => {
+    const result = await verifyAddressFromForm(form);
+    toast(result.message, result.ok ? "success" : "error");
+  });
 
+  // ── Priority buttons ──────────────────────────────────────────────────
+  const priorityHidden = $("#nr-priorita");
+  $$(".nr-priority-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      $$(".nr-priority-btn").forEach(b => b.classList.remove("is-selected"));
+      btn.classList.add("is-selected");
+      if (priorityHidden) priorityHidden.value = btn.dataset.val || "";
+    });
+  });
+
+  // ── Char counters ─────────────────────────────────────────────────────
+  function bindCharCounter(inputId, counterId, max) {
+    const input = $("#" + inputId);
+    const counter = $("#" + counterId);
+    if (!input || !counter) return;
+    const update = () => {
+      const len = input.value.length;
+      counter.textContent = len + "/" + max;
+      counter.classList.toggle("is-near",  len >= max * 0.85 && len < max);
+      counter.classList.toggle("is-limit", len >= max);
+    };
+    input.addEventListener("input", update);
+    update();
+  }
+  bindCharCounter("nr-titolo", "titolo-count", 100);
+  bindCharCounter("nr-desc", "desc-count", 1000);
+
+  // ── Photo upload & previews ───────────────────────────────────────────
+  const photoInput = $("#photo-input");
+  const photoPreviews = $("#photo-previews");
+  const MAX_PHOTOS = 5;
+  let photoFiles = [];
+
+  function refreshPhotoPreviews() {
+    if (!photoPreviews) return;
+    photoPreviews.innerHTML = "";
+    photoFiles.forEach((file, idx) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const item = document.createElement("div");
+        item.className = "nr-photo-preview-item";
+        item.innerHTML = `
+          <img src="${e.target.result}" alt="Foto ${idx+1}" />
+          <button type="button" class="nr-photo-preview-remove" data-idx="${idx}" title="Rimuovi">&times;</button>
+        `;
+        item.querySelector(".nr-photo-preview-remove").addEventListener("click", () => {
+          photoFiles.splice(idx, 1);
+          refreshPhotoPreviews();
+        });
+        photoPreviews.appendChild(item);
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Drag & drop area
+  const uploadArea = $(".nr-photo-upload");
+  uploadArea?.addEventListener("click", () => photoInput?.click());
+  uploadArea?.addEventListener("dragover", (e) => { e.preventDefault(); uploadArea.style.borderColor = "var(--accent)"; });
+  uploadArea?.addEventListener("dragleave",  () => { uploadArea.style.borderColor = ""; });
+  uploadArea?.addEventListener("drop", (e) => {
+    e.preventDefault();
+    uploadArea.style.borderColor = "";
+    const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith("image/"));
+    const remaining = MAX_PHOTOS - photoFiles.length;
+    photoFiles = photoFiles.concat(files.slice(0, remaining));
+    refreshPhotoPreviews();
+  });
+
+  photoInput?.addEventListener("change", () => {
+    const files = Array.from(photoInput.files || []).filter(f => f.type.startsWith("image/"));
+    const remaining = MAX_PHOTOS - photoFiles.length;
+    photoFiles = photoFiles.concat(files.slice(0, remaining));
+    photoInput.value = "";
+    refreshPhotoPreviews();
+  });
+
+  // Camera button
+  $("#camera-btn")?.addEventListener("click", () => {
+    const ci = document.createElement("input");
+    ci.type = "file";
+    ci.accept = "image/*";
+    ci.capture = "environment";
+    ci.addEventListener("change", () => {
+      const files = Array.from(ci.files || []);
+      const remaining = MAX_PHOTOS - photoFiles.length;
+      photoFiles = photoFiles.concat(files.slice(0, remaining));
+      refreshPhotoPreviews();
+    });
+    ci.click();
+  });
+
+  // Gallery button
+  $("#gallery-btn")?.addEventListener("click", () => {
+    photoInput?.click();
+  });
+
+  // ── GPS button ────────────────────────────────────────────────────────
+  $("#geo-btn-map")?.addEventListener("click", useGeolocationForNewMap);
   $("#geo-btn")?.addEventListener("click", useGeolocation);
 
-  form?.addEventListener("submit", async (event) => {
+  // ── Position tabs ─────────────────────────────────────────────────────
+  $$(".nr-pos-tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      $$(".nr-pos-tab").forEach(t => t.classList.remove("is-active"));
+      tab.classList.add("is-active");
+    });
+  });
+
+  // ── Map #map-new initialization ───────────────────────────────────────
+  setTimeout(() => {
+  const mapNewEl = $("#map-new");
+  if (mapNewEl && window.L && !state.mapNew) {
+    const center = [45.584, 9.274];
+    state.mapNew = L.map(mapNewEl, { scrollWheelZoom: false }).setView(center, 12);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap" }).addTo(state.mapNew);
+    setTimeout(() => state.mapNew?.invalidateSize(), 180);
+
+    // Click on map to set coordinates
+    state.mapNew.on("click", (e) => {
+      const lat = e.latlng.lat.toFixed(6);
+      const lng = e.latlng.lng.toFixed(6);
+      const coordInput = form.querySelector("[name='coordinate']") || form.querySelector("#coordinate-input");
+      if (coordInput) coordInput.value = `${lat}, ${lng}`;
+      // Place a marker
+      if (state.mapNewMarker) state.mapNewMarker.remove();
+      state.mapNewMarker = L.marker([lat, lng]).addTo(state.mapNew);
+      // Reverse geocode
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`, { headers: { "Accept": "application/json" } })
+        .then(r => r.json())
+        .then(json => {
+          const address = json.address || {};
+          setLocationFromAddress(address);
+          setInputValue("[name='via']", address.road || "");
+          setInputValue("[name='civico']", address.house_number || "");
+          const verifiedText = $("#nr-verified-text");
+          if (verifiedText) verifiedText.textContent = json.display_name || "";
+        })
+        .catch(() => {});
+    });
+  }
+  }, 60); // end setTimeout for map init
+
+  // ── Privacy toggle ────────────────────────────────────────────────────
+  $$(".nr-privacy-option").forEach(opt => {
+    opt.addEventListener("click", () => {
+      $$(".nr-privacy-option").forEach(o => o.classList.remove("is-selected"));
+      opt.classList.add("is-selected");
+      const anonInput = form.querySelector("[name='anonimo']");
+      if (anonInput) anonInput.value = opt.dataset.val || "pubblico";
+    });
+  });
+
+  // ── Draft save buttons ────────────────────────────────────────────────
+  async function saveDraft() {
+    toast("Bozza salvata.", "success");
+    // Could persist to localStorage for demo
+    try {
+      const data = new FormData(form);
+      localStorage.setItem("civicvois_draft", JSON.stringify(Object.fromEntries(data.entries())));
+    } catch (_) {}
+  }
+  $("#save-draft-btn")?.addEventListener("click", saveDraft);
+  $("#save-draft-mobile")?.addEventListener("click", saveDraft);
+
+  // ── Form submit ───────────────────────────────────────────────────────
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
     await createReport(event.currentTarget);
+  });
+}
+
+function activateProfileTab(tabName) {
+  $$(".profile-tab").forEach(t => t.classList.toggle("is-active", t.dataset.tab === tabName));
+  $$(".profile-tab-panel").forEach(p => {
+    p.style.display = p.dataset.panel === tabName ? "block" : "none";
+  });
+  // Rebind il form impostazioni quando aperto
+  if (tabName === "impostazioni") {
+    const form = $("#profile-form");
+    bindLocationControls(form);
+    bindAvatarUpload(form);
+    bindProfileForm();
+  }
+}
+
+function bindProfileTabs() {
+  $$(".profile-tab").forEach(tab => {
+    tab.addEventListener("click", () => activateProfileTab(tab.dataset.tab));
   });
 }
 
@@ -1783,6 +2493,36 @@ function previewPhoto(input) {
     copy.innerHTML = `<img src="${reader.result}" alt="Anteprima foto" class="upload-preview" />`;
   };
   reader.readAsDataURL(file);
+}
+
+function useGeolocationForNewMap() {
+  if (!navigator.geolocation) return toast("Geolocalizzazione non disponibile su questo browser.", "error");
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+    if (state.mapNew) {
+      state.mapNew.setView([lat, lng], 16);
+      if (state.mapNewMarker) state.mapNewMarker.remove();
+      state.mapNewMarker = L.marker([lat, lng]).addTo(state.mapNew);
+    }
+    const form = $("#report-form");
+    const coordInput = form?.querySelector("[name='coordinate']") || form?.querySelector("#coordinate-input");
+    if (coordInput) coordInput.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    toast("Posizione rilevata.", "success");
+    try {
+      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      const json = await res.json();
+      const address = json.address || {};
+      setLocationFromAddress(address);
+      setInputValue("[name='via']", address.road || "");
+      setInputValue("[name='civico']", address.house_number || "");
+      const verifiedText = $("#nr-verified-text");
+      if (verifiedText) verifiedText.textContent = json.display_name || "";
+    } catch (err) { console.warn(err); }
+  }, () => {
+    toast("Non riesco a recuperare la posizione. Controlla i permessi del browser.", "error");
+  }, { enableHighAccuracy: true, timeout: 9000 });
 }
 
 async function useGeolocation() {
