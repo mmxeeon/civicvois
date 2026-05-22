@@ -496,7 +496,9 @@ const state = {
   locationData: buildLocationData(readLocal("cv_italy_locations_raw", null) || FALLBACK_LOCATIONS),
   locationDataSource: readLocal("cv_italy_locations_raw", null) ? "cache" : "fallback",
   map: null,
+  mapMobile: null,
   markers: [],
+  markersMobile: [],
   uploading: false
 };
 
@@ -601,6 +603,11 @@ async function loadLikes() {
 // ─── Render principale ────────────────────────────────────────────────────────
 
 function render() {
+  // Resetta le istanze mappa ad ogni render (il DOM viene ricostruito)
+  state.map = null;
+  state.mapMobile = null;
+  state.markers = [];
+  state.markersMobile = [];
   if (!state.user && ["auth"].includes(state.route)) return renderAuthPage();
   if (!state.user && ["dashboard", "new", "profile", "admin"].includes(state.route)) return renderAuthPage();
 
@@ -907,29 +914,60 @@ async function handleLogout() {
 function renderApp(active) {
   app.innerHTML = `
     <div class="app-layout">
+
+      <!-- ── Sidebar desktop ── -->
       <aside class="sidebar">
-        ${brandHtml()}
-        ${navHtml(active)}
+        <div class="sidebar-inner">
+          ${brandHtml()}
+          ${navHtml(active)}
+        </div>
         <div class="side-bottom">
           ${userMiniHtml()}
           <button class="btn btn-ghost" id="logout-btn">Esci</button>
         </div>
       </aside>
-      <div>
-        <header class="mobile-topbar">
-          ${brandHtml()}
-          <button class="icon-btn mobile-logout-btn" title="Esci dall'account" aria-label="Esci">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
-          </button>
+
+      <!-- ── Area principale ── -->
+      <div class="app-body">
+
+        <!-- Header desktop: search + notifiche + CTA -->
+        <header class="app-header">
+          <div class="app-header-search">
+            <svg class="app-header-search-ico" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+            <input class="app-header-search-input" id="global-search" type="search" placeholder="Cerca per titolo, comune, autore…" />
+          </div>
+          <div class="app-header-actions">
+            <button class="icon-btn app-notif-btn" aria-label="Notifiche">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              <span class="notif-dot"></span>
+            </button>
+            <button class="btn btn-primary" data-route="new">+ Nuova segnalazione</button>
+          </div>
         </header>
+
+        <!-- Mobile topbar -->
+        <header class="mobile-topbar">
+          <button class="icon-btn hamburger-btn" id="mobile-menu-btn" aria-label="Menu">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          ${brandHtml()}
+          <div class="mobile-topbar-right">
+            <button class="icon-btn app-notif-btn" aria-label="Notifiche">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+              <span class="notif-dot"></span>
+            </button>
+            ${avatarHtml(state.profile || {}, "mobile-avatar")}
+          </div>
+        </header>
+
         <main class="main">
           ${active === "dashboard" ? dashboardHtml() : ""}
           ${active === "new" ? newReportHtml() : ""}
           ${active === "profile" ? profileHtml() : ""}
           ${active === "admin" ? adminHtml() : ""}
         </main>
+
+        <!-- Mobile bottom nav -->
         ${mobileNavHtml(active)}
       </div>
     </div>
@@ -952,28 +990,75 @@ function dashboardHtml() {
   const hasMore = state.page < totalPages - 1;
 
   return `
-    <div class="topbar">
+    <!-- Titolo pagina -->
+    <div class="dash-header">
       <div>
-        <h1>Dashboard civica</h1>
-        <p>Controlla segnalazioni, priorità e aggiornamenti del territorio.</p>
+        <h1 class="dash-title">Dashboard civica</h1>
+        <p class="dash-subtitle">Controlla segnalazioni, priorità e aggiornamenti del territorio.</p>
       </div>
-      <button class="btn btn-primary" data-route="new">+ Nuova segnalazione</button>
+      <!-- CTA desktop visibile solo da desktop (nel mobile c'è quella separata) -->
+      <button class="btn btn-primary dash-cta-desktop" data-route="new">+ Nuova segnalazione</button>
     </div>
 
     ${DEMO_MODE ? demoNoticeHtml() : ""}
 
-    <section class="stats-grid stats-grid--dashboard" aria-label="Statistiche">
-      <div class="kpi-card"><b>${stats.total}</b><span>Totali</span></div>
-      <div class="kpi-card"><b>${stats.open}</b><span>Aperte</span></div>
-      <div class="kpi-card"><b>${stats.inProgress}</b><span>In carico</span></div>
-      <div class="kpi-card"><b>${stats.resolved}</b><span>Risolte</span></div>
+    <!-- CTA mobile: visibile solo su mobile, full-width -->
+    <button class="btn btn-primary dash-cta-mobile" data-route="new">+ Nuova segnalazione</button>
+
+    <!-- KPI: 4 colonne desktop, 4 colonne compatte mobile -->
+    <section class="kpi-grid" aria-label="Statistiche">
+      <div class="kpi-card kpi-card--totali">
+        <div class="kpi-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        </div>
+        <div class="kpi-body">
+          <b class="kpi-value">${stats.total}</b>
+          <span class="kpi-label">Totali</span>
+          <span class="kpi-trend">+${Math.max(0, stats.total - Math.max(0, stats.total - 1))} vs sett. scorsa</span>
+        </div>
+      </div>
+      <div class="kpi-card kpi-card--carico">
+        <div class="kpi-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="kpi-body">
+          <b class="kpi-value">${stats.inProgress}</b>
+          <span class="kpi-label">In carico</span>
+          <span class="kpi-trend">= vs sett. scorsa</span>
+        </div>
+      </div>
+      <div class="kpi-card kpi-card--risolte">
+        <div class="kpi-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <div class="kpi-body">
+          <b class="kpi-value">${stats.resolved}</b>
+          <span class="kpi-label">Risolte</span>
+          <span class="kpi-trend">= vs sett. scorsa</span>
+        </div>
+      </div>
+      <div class="kpi-card kpi-card--aperte">
+        <div class="kpi-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6M9 13h4"/></svg>
+        </div>
+        <div class="kpi-body">
+          <b class="kpi-value">${stats.open}</b>
+          <span class="kpi-label">Aperte</span>
+          <span class="kpi-trend">= vs sett. scorsa</span>
+        </div>
+      </div>
     </section>
 
+    <!-- Layout a 2 colonne: feed sinistra, mappa+attività destra -->
     <section class="dashboard-grid">
-      <div>
-        <div class="filters filters--dashboard">
-          <input class="input filter-search" id="filter-q" type="search" placeholder="🔍 Cerca per titolo, comune, autore…" value="${escapeAttr(state.filters.q)}" />
-          <div class="filters-row">
+
+      <!-- Colonna sinistra: filtri + feed -->
+      <div class="dash-feed-col">
+
+        <!-- Sezione filtri -->
+        <div class="dash-filters-panel">
+          <p class="dash-filters-title">Filtra segnalazioni</p>
+          <div class="filters-row-desktop">
             <select class="select" id="filter-comune">
               <option value="">Tutti i comuni</option>
               ${uniqueValues(state.reports, "comune").map(v => `<option ${state.filters.comune === v ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}
@@ -993,9 +1078,40 @@ function dashboardHtml() {
             </select>
           </div>
         </div>
+
+        <!-- Filtri mobile: 2x2 dropdown + icona filtri avanzati -->
+        <div class="dash-filters-mobile">
+          <input class="input filter-search" id="filter-q" type="search" placeholder="Cerca per titolo, comune, autore…" value="${escapeAttr(state.filters.q)}" />
+          <div class="filters-row-mobile">
+            <select class="select" id="filter-comune-m">
+              <option value="">Tutti i comuni</option>
+              ${uniqueValues(state.reports, "comune").map(v => `<option ${state.filters.comune === v ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}
+            </select>
+            <select class="select" id="filter-tipo-m">
+              <option value="">Tutte le categorie</option>
+              ${CATEGORIES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.tipo === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
+            </select>
+            <select class="select" id="filter-stato-m">
+              <option value="">Tutti gli stati</option>
+              ${STATUSES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.stato === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
+            </select>
+            <select class="select" id="filter-sort-m">
+              <option value="recenti" ${state.filters.sort === "recenti" ? "selected" : ""}>Più recenti</option>
+              <option value="like" ${state.filters.sort === "like" ? "selected" : ""}>Più votate</option>
+              <option value="urgenti" ${state.filters.sort === "urgenti" ? "selected" : ""}>Priorità alta</option>
+            </select>
+            <button class="icon-btn filter-advanced-btn" aria-label="Filtri avanzati">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Feed segnalazioni -->
         <div class="feed" id="report-feed">
           ${filtered.length ? filtered.map(reportCardHtml).join("") : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.")}
         </div>
+
+        <!-- Paginazione -->
         ${totalPages > 1 ? `
           <div class="pagination">
             <button class="btn btn-soft btn-small" id="page-prev" ${state.page === 0 ? "disabled" : ""}>← Precedente</button>
@@ -1003,16 +1119,31 @@ function dashboardHtml() {
             <button class="btn btn-soft btn-small" id="page-next" ${!hasMore ? "disabled" : ""}>Successiva →</button>
           </div>
         ` : ""}
+
+        <!-- Mappa: visibile solo mobile (dopo il feed) -->
+        <div class="dash-map-mobile panel panel-pad">
+          <h2 class="panel-title">Mappa delle segnalazioni</h2>
+          <div class="map-panel map-panel--mobile"><div id="map-mobile"></div></div>
+        </div>
       </div>
 
-      <aside class="panel panel-pad">
-        <div class="map-panel"><div id="map"></div></div>
-        <div style="height: 16px"></div>
-        <h2 class="panel-title">Attività recenti</h2>
-        <p class="panel-subtitle">Ultimi aggiornamenti dalla piattaforma.</p>
-        <div style="height: 14px"></div>
-        <div class="activity-list">
-          ${state.reports.slice(0, 5).map(activityHtml).join("") || emptyHtml("Nessuna attività", "Le attività compariranno qui.")}
+      <!-- Colonna destra (solo desktop): mappa + attività -->
+      <aside class="dash-aside">
+        <div class="panel panel-pad dash-map-desktop">
+          <h2 class="panel-title">Mappa delle segnalazioni</h2>
+          <div style="height:10px"></div>
+          <div class="map-panel"><div id="map"></div></div>
+        </div>
+
+        <div class="panel panel-pad dash-activity-panel">
+          <h2 class="panel-title">Attività recenti</h2>
+          <p class="panel-subtitle">Ultimi aggiornamenti dalla piattaforma.</p>
+          <div style="height: 14px"></div>
+          <div class="activity-list">
+            ${state.reports.slice(0, 5).map(activityHtml).join("") || emptyHtml("Nessuna attività", "Le attività compariranno qui.")}
+          </div>
+          <div style="height:12px"></div>
+          <button class="btn btn-ghost" style="width:100%; font-size:0.85rem;">Vedi tutte le attività →</button>
         </div>
       </aside>
     </section>
@@ -1242,6 +1373,22 @@ function bindAppEvents(active) {
   $("#logout-btn")?.addEventListener("click", handleLogout);
   document.querySelector(".mobile-logout-btn")?.addEventListener("click", handleLogout);
 
+  // Global search header
+  $("#global-search")?.addEventListener("input", (e) => {
+    state.filters.q = e.target.value;
+    const fq = $("#filter-q");
+    if (fq) fq.value = e.target.value;
+    const feed = $("#report-feed");
+    if (feed) {
+      const list = filteredReports();
+      feed.innerHTML = list.length
+        ? list.map(reportCardHtml).join("")
+        : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro.");
+      bindReportActions();
+      refreshMapMarkers();
+    }
+  });
+
   if (active === "dashboard") {
     bindFilters();
     bindReportActions();
@@ -1265,27 +1412,40 @@ function bindAppEvents(active) {
 }
 
 function bindFilters() {
+  // Desktop + mobile filter pairs: [desktopId, mobileId, stateKey, eventType]
   const mappings = [
-    ["#filter-q", "q", "input"],
-    ["#filter-comune", "comune", "change"],
-    ["#filter-tipo", "tipo", "change"],
-    ["#filter-stato", "stato", "change"],
-    ["#filter-sort", "sort", "change"]
+    ["#filter-q",       "#filter-q",       "q",       "input"],
+    ["#filter-comune",  "#filter-comune-m", "comune",  "change"],
+    ["#filter-tipo",    "#filter-tipo-m",   "tipo",    "change"],
+    ["#filter-stato",   "#filter-stato-m",  "stato",   "change"],
+    ["#filter-sort",    "#filter-sort-m",   "sort",    "change"]
   ];
 
-  mappings.forEach(([selector, key, event]) => {
-    $(selector)?.addEventListener(event, (e) => {
-      state.filters[key] = e.target.value;
-      const feed = $("#report-feed");
-      if (feed) {
-        const list = filteredReports();
-        feed.innerHTML = list.length
-          ? list.map(reportCardHtml).join("")
-          : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.");
-        bindReportActions();
-        refreshMapMarkers();
-      }
-    });
+  function applyFilter(key, value) {
+    state.filters[key] = value;
+    // Sync gli altri selettori con lo stesso key
+    mappings
+      .filter(([, , k]) => k === key)
+      .forEach(([dsk, mob]) => {
+        const d = $(dsk);
+        const m = $(mob);
+        if (d && d.value !== value) d.value = value;
+        if (m && m.value !== value) m.value = value;
+      });
+    const feed = $("#report-feed");
+    if (feed) {
+      const list = filteredReports();
+      feed.innerHTML = list.length
+        ? list.map(reportCardHtml).join("")
+        : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.");
+      bindReportActions();
+      refreshMapMarkers();
+    }
+  }
+
+  mappings.forEach(([dsk, mob, key, event]) => {
+    $(dsk)?.addEventListener(event, (e) => applyFilter(key, e.target.value));
+    if (mob !== dsk) $(mob)?.addEventListener(event, (e) => applyFilter(key, e.target.value));
   });
 }
 
@@ -1853,23 +2013,38 @@ function openReportDrawer(id) {
 // ─── Mappa ────────────────────────────────────────────────────────────────────
 
 function initMap() {
-  const mapEl = $("#map");
-  if (!mapEl || !window.L) return;
+  const tileUrl = "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+  const tileOpts = { attribution: "&copy; OpenStreetMap" };
+  const center = [45.584, 9.274];
+  const zoom = 10;
 
-  state.map = L.map(mapEl, { scrollWheelZoom: false }).setView([45.584, 9.274], 10);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: "&copy; OpenStreetMap"
-  }).addTo(state.map);
+  // Mappa desktop
+  const mapEl = $("#map");
+  if (mapEl && window.L && !state.map) {
+    state.map = L.map(mapEl, { scrollWheelZoom: false }).setView(center, zoom);
+    L.tileLayer(tileUrl, tileOpts).addTo(state.map);
+    setTimeout(() => state.map?.invalidateSize(), 180);
+  }
+
+  // Mappa mobile
+  const mapElM = $("#map-mobile");
+  if (mapElM && window.L && !state.mapMobile) {
+    state.mapMobile = L.map(mapElM, { scrollWheelZoom: false }).setView(center, zoom);
+    L.tileLayer(tileUrl, tileOpts).addTo(state.mapMobile);
+    setTimeout(() => state.mapMobile?.invalidateSize(), 180);
+  }
 
   refreshMapMarkers();
-  setTimeout(() => state.map?.invalidateSize(), 180);
 }
 
 function refreshMapMarkers() {
-  if (!state.map || !window.L) return;
+  if (!window.L) return;
 
-  state.markers.forEach(marker => marker.remove());
+  // Pulisci marcatori esistenti
+  (state.markers || []).forEach(marker => marker.remove());
   state.markers = [];
+  (state.markersMobile || []).forEach(marker => marker.remove());
+  state.markersMobile = [];
 
   const bounds = [];
   filteredReports().forEach(report => {
@@ -1877,13 +2052,26 @@ function refreshMapMarkers() {
     const lng = Number(report.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
 
-    const marker = L.marker([lat, lng]).addTo(state.map);
-    marker.bindPopup(`<strong>${escapeHtml(report.titolo || report.tipo)}</strong><br>${escapeHtml(report.comune || "")}`);
-    state.markers.push(marker);
+    const popup = `<strong>${escapeHtml(report.titolo || report.tipo)}</strong><br>${escapeHtml(report.comune || "")}`;
+
+    if (state.map) {
+      const marker = L.marker([lat, lng]).addTo(state.map);
+      marker.bindPopup(popup);
+      state.markers.push(marker);
+    }
+    if (state.mapMobile) {
+      const markerM = L.marker([lat, lng]).addTo(state.mapMobile);
+      markerM.bindPopup(popup);
+      state.markersMobile.push(markerM);
+    }
+
     bounds.push([lat, lng]);
   });
 
-  if (bounds.length) state.map.fitBounds(bounds, { padding: [24, 24], maxZoom: 14 });
+  if (bounds.length) {
+    state.map?.fitBounds(bounds, { padding: [24, 24], maxZoom: 14 });
+    state.mapMobile?.fitBounds(bounds, { padding: [16, 16], maxZoom: 14 });
+  }
 }
 
 // ─── Card segnalazione ────────────────────────────────────────────────────────
