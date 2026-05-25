@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CivicVois</string>
+    <string name="title_activity_main">CivicVois</string>
+    <string name="package_name">it.civicvois.app</string>
+    <string name="custom_url_scheme">it.civicvois.app</string>
+</resources>

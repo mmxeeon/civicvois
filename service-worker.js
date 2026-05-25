@@ -1,4 +1,4 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v4-nav-clean";
+const CIVICVOIS_CACHE = "civicvois-pwa-v5-app-ready";
 const APP_SHELL = [
   "/",
   "/index.html",

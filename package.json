@@ -1,13 +1,30 @@
 {
-  "name": "civicvois-netlify-final",
+  "name": "civicvois-app",
   "version": "3.0.0",
   "private": true,
+  "description": "CivicVois — piattaforma civica (web PWA + app iOS/Android via Capacitor)",
   "scripts": {
     "deploy": "netlify deploy --prod",
-    "dev": "netlify dev"
+    "dev": "netlify dev",
+    "build:web": "node scripts/build-web.mjs",
+    "cap:sync": "npm run build:web && npx cap sync",
+    "cap:ios": "npm run cap:sync && npx cap open ios",
+    "cap:android": "npm run cap:sync && npx cap open android",
+    "cap:icons": "npx @capacitor/assets generate --assetPath resources --iconBackgroundColor #0b1020 --splashBackgroundColor #0b1020 --iconBackgroundColorDark #0b1020 --splashBackgroundColorDark #0b1020"
   },
   "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/geolocation": "^6.1.0",
+    "@capacitor/ios": "^6.2.0",
+    "@capacitor/keyboard": "^6.0.3",
+    "@capacitor/splash-screen": "^6.0.3",
+    "@capacitor/status-bar": "^6.0.2",
     "@netlify/blobs": "^9.1.0"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^6.2.0"
+  }
 }
