@@ -1,5 +1,5 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE, API_BASE_URL, IS_NATIVE_APP, GOOGLE_WEB_CLIENT_ID, FACEBOOK_APP_ID } from "./config.js";
-import { createProxySupabaseClient } from "./supabase-proxy.js";
+import { createSupabaseClient } from "./supabase-client.js";
 
 // ─── Costanti ──────────────────────────────────────────────────────────────
 
@@ -57,9 +57,9 @@ const app = $("#app");
 const hasSupabaseConfig = Boolean(SUPABASE_URL?.startsWith("https://") && SUPABASE_ANON_KEY?.length > 20);
 const DEMO_MODE = FORCE_DEMO_MODE || !hasSupabaseConfig;
 
-const supabase = DEMO_MODE ? null : createProxySupabaseClient({
-  supabaseUrl: SUPABASE_URL,
-  anonKey: SUPABASE_ANON_KEY
+const supabase = DEMO_MODE ? null : createSupabaseClient({
+  url: SUPABASE_URL,
+  key: SUPABASE_ANON_KEY
 });
 
 // ─── Retry helper ─────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ function clean(value) {
 //  Internamente usa il demo locale oppure la Netlify Function/Supabase.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const backend = DEMO_MODE ? createDemoAdapter() : createNetlifyAdapter();
+const backend = DEMO_MODE ? createDemoAdapter() : createSupabaseAdapter();
 
 function createDemoAdapter() {
   const demoDb = createDemoBackend();
@@ -219,7 +219,7 @@ function createDemoAdapter() {
   };
 }
 
-function createNetlifyAdapter() {
+function createSupabaseAdapter() {
   return {
     isDemo: false,
 
@@ -261,7 +261,8 @@ function createNetlifyAdapter() {
     },
 
     async socialLogin({ provider, token, profileHint }) {
-      const { data, error } = await supabase.auth.signInWithSocial({ provider, token, profileHint });
+      // Supabase verifica l'id-token col provider (audience = i Client ID configurati).
+      const { data, error } = await supabase.auth.signInWithIdToken({ provider, token });
       if (error) throw new Error(niceBackendError(error, "Accesso social non riuscito."));
       const profile = await this._ensureProfile(data.user, profileHint || {});
       return { user: data.user, session: data.session, profile };
@@ -472,7 +473,6 @@ function createNetlifyAdapter() {
 
       const payload = {
         id: user.id,
-        email: user.email || extra.email || null,
         username: fallbackUsername,
         full_name: clean(extra.full_name || metadata.full_name || fallbackUsername),
         regione: clean(extra.regione || metadata.regione || ""),
@@ -2824,7 +2824,8 @@ function bindNewReportForm() {
     btn.addEventListener("click", () => {
       $$(".nr-priority-btn").forEach(b => b.classList.remove("is-selected"));
       btn.classList.add("is-selected");
-      if (priorityHidden) priorityHidden.value = btn.dataset.val || "";
+      // I bottoni espongono data-priority (non data-val): leggere il valore giusto (C-05).
+      if (priorityHidden) priorityHidden.value = btn.dataset.priority || "media";
     });
   });
 
@@ -2849,7 +2850,10 @@ function bindNewReportForm() {
   const photoInput = $("#photo-input");
   const photoPreviews = $("#photo-previews");
   const MAX_PHOTOS = 5;
-  let photoFiles = [];
+  const photoFiles = [];
+  // L'input file viene svuotato dopo ogni scelta: espongo i file sul form così
+  // createReport può leggerli (C-04).
+  if (form) form._cvPhotos = photoFiles;
 
   function refreshPhotoPreviews() {
     if (!photoPreviews) return;
@@ -2883,14 +2887,14 @@ function bindNewReportForm() {
     uploadArea.style.borderColor = "";
     const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith("image/"));
     const remaining = MAX_PHOTOS - photoFiles.length;
-    photoFiles = photoFiles.concat(files.slice(0, remaining));
+    photoFiles.push(...files.slice(0, remaining));
     refreshPhotoPreviews();
   });
 
   photoInput?.addEventListener("change", () => {
     const files = Array.from(photoInput.files || []).filter(f => f.type.startsWith("image/"));
     const remaining = MAX_PHOTOS - photoFiles.length;
-    photoFiles = photoFiles.concat(files.slice(0, remaining));
+    photoFiles.push(...files.slice(0, remaining));
     photoInput.value = "";
     refreshPhotoPreviews();
   });
@@ -2904,7 +2908,7 @@ function bindNewReportForm() {
     ci.addEventListener("change", () => {
       const files = Array.from(ci.files || []);
       const remaining = MAX_PHOTOS - photoFiles.length;
-      photoFiles = photoFiles.concat(files.slice(0, remaining));
+      photoFiles.push(...files.slice(0, remaining));
       refreshPhotoPreviews();
     });
     ci.click();
@@ -3053,7 +3057,11 @@ async function createReport(form) {
   if (!location.ok) return toast(location.message, "error");
 
   let coords = parseCoords(String(formData.get("coordinate") || ""));
-  const photoFile = formData.get("photo");
+  // Le foto scelte sono nell'array esposto sul form (C-04): l'input file è già
+  // stato svuotato, quindi formData.get("photo") sarebbe vuoto.
+  const formEl = form instanceof FormData ? null : form;
+  const selectedPhotos = formEl && Array.isArray(formEl._cvPhotos) ? formEl._cvPhotos : [];
+  const photoFile = selectedPhotos[0] || formData.get("photo");
 
   const payload = {
     user_id: state.user.id,
@@ -3079,6 +3087,9 @@ async function createReport(form) {
   }
   if (!payload.via) {
     return toast("Inserisci la via prima di inviare la segnalazione.", "error");
+  }
+  if (!payload.photoFile) {
+    return toast("Aggiungi almeno una foto: è obbligatoria per la segnalazione.", "error");
   }
 
   // Verifica indirizzo OBBLIGATORIA e bloccante: l'invio è permesso solo con

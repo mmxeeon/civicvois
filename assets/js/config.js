@@ -27,11 +27,11 @@ export const IS_NATIVE_APP = (() => {
   }
 })();
 
-// Compat: il vecchio codice importa questi tre simboli per decidere se attivare
-// il backend reale. Mantengo i placeholder così "hasSupabaseConfig" resta true
-// e l'app continua a usare il proxy verso Netlify Functions.
-export const SUPABASE_URL = "https://netlify-blobs.civicvois.local";
-export const SUPABASE_ANON_KEY = "netlify-blobs-local-backend-key";
+// Progetto Supabase (database reale, sostituisce Netlify Blobs).
+// La publishable key è PUBBLICA per definizione: sta nel client ed è protetta
+// dalle policy RLS lato database. La secret key NON va mai qui.
+export const SUPABASE_URL = "https://zqvzpnaxsoxpljdzojjq.supabase.co";
+export const SUPABASE_ANON_KEY = "sb_publishable_0ftTXKs9-PrbOhLn--iYWw_AkWUCASj";
 export const FORCE_DEMO_MODE = false;
 
 // ── Social login (Google + Facebook) ─────────────────────────────────────

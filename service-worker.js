@@ -6,7 +6,7 @@ const APP_SHELL = [
   "/assets/css/styles.css",
   "/assets/js/app.js",
   "/assets/js/config.js",
-  "/assets/js/supabase-proxy.js",
+  "/assets/js/supabase-client.js",
   "/assets/img/civicvois-logo.png",
   "/assets/icons/icon-192.png",
   "/assets/icons/icon-512.png",
