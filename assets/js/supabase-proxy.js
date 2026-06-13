@@ -63,6 +63,13 @@ export function createProxySupabaseClient({ supabaseUrl, anonKey }) {
     const text = await response.text();
     try { json = text ? JSON.parse(text) : null; } catch { json = { message: text }; }
 
+    // Sessione scaduta/non valida: pulizia automatica (no stato "fantasma").
+    // Solo se avevamo una sessione e non è la chiamata di login stessa.
+    if (response.status === 401 && session?.access_token && payload?.kind !== "auth") {
+      clearStoredSession();
+      await notify("SIGNED_OUT", null);
+    }
+
     if (!response.ok || json?.error) {
       const message = json?.error?.message || json?.message || `Errore API CivicVois (${response.status})`;
       const error = new Error(message);
@@ -167,11 +174,37 @@ export function createProxySupabaseClient({ supabaseUrl, anonKey }) {
           return { data: { session: null, user: null }, error };
         }
       },
+      async signInWithSocial({ provider, token, profileHint = {} }) {
+        try {
+          const res = await callProxy({
+            kind: "auth",
+            action: "social-signin",
+            provider,
+            token,
+            profile: profileHint
+          });
+          if (res.session) {
+            setStoredSession(res.session);
+            await notify("SIGNED_IN", res.session);
+          }
+          return { data: { session: res.session || null, user: res.user || res.session?.user || null }, error: null };
+        } catch (error) {
+          return { data: { session: null, user: null }, error };
+        }
+      },
       async signOut() {
         clearStoredSession();
         await notify("SIGNED_OUT", null);
         return { error: null };
       }
+    },
+    // Elimina definitivamente l'account corrente (profilo, segnalazioni, like)
+    async deleteAccount() {
+      return callProxy({ kind: "account", action: "delete" });
+    },
+    // Moderazione contenuti (segnala / blocca / lista)
+    async moderation(payload) {
+      return callProxy({ kind: "moderation", ...payload });
     },
     from(table) { return new QueryBuilder(table); },
     storage: {

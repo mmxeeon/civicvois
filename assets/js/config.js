@@ -33,3 +33,14 @@ export const IS_NATIVE_APP = (() => {
 export const SUPABASE_URL = "https://netlify-blobs.civicvois.local";
 export const SUPABASE_ANON_KEY = "netlify-blobs-local-backend-key";
 export const FORCE_DEMO_MODE = false;
+
+// ── Social login (Google + Facebook) ─────────────────────────────────────
+// Web Client ID di Google (usato sul sito browser e come audience del JWT
+// che il backend valida). Su app nativa Capacitor il client ID iOS/Android è
+// configurato in capacitor.config.json.
+export const GOOGLE_WEB_CLIENT_ID = "951133750252-icj1g21p1tude2ra1c5par5jkhm7t1l8.apps.googleusercontent.com";
+
+// Facebook App ID (vuoto finché non crei l'app su developers.facebook.com).
+// Quando l'avrai inserito qui + nei Netlify env vars + Info.plist, il login
+// Facebook su sito e app funzionerà.
+export const FACEBOOK_APP_ID = "";
