@@ -17,6 +17,16 @@ const APP_SHELL = [
   "/assets/js/config.js",
   "/assets/js/supabase-client.js",
   "/assets/js/sw-register.js",
+  "/assets/js/pages/index.js",
+  "/assets/js/pages/admin.js",
+  "/assets/js/pages/auth.js",
+  "/assets/js/pages/complete-profile.js",
+  "/assets/js/pages/dashboard.js",
+  "/assets/js/pages/detail.js",
+  "/assets/js/pages/home.js",
+  "/assets/js/pages/new-report.js",
+  "/assets/js/pages/profile.js",
+  "/assets/js/pages/settings.js",
   "/assets/img/civicvois-logo.png",
   "/assets/icons/icon-192.png",
   "/assets/icons/icon-512.png",
@@ -49,7 +59,7 @@ self.addEventListener("fetch", (event) => {
   // Le API reali devono sempre andare online: niente cache su login, segnalazioni, like, immagini.
   if (url.origin === self.location.origin && url.pathname.startsWith("/.netlify/functions/")) return;
 
-  // Non intercettiamo risorse esterne come mappe, CDN Leaflet o API indirizzi.
+  // Non intercettiamo risorse esterne come mappe, auth provider o API indirizzi.
   if (url.origin !== self.location.origin) return;
 
   if (url.pathname === "/service-worker.js") return;

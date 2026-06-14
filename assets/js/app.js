@@ -1,5 +1,6 @@
 import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE, IS_NATIVE_APP, GOOGLE_WEB_CLIENT_ID, FACEBOOK_APP_ID } from "./config.js";
 import { createSupabaseClient } from "./supabase-client.js";
+import { pageRoutes } from "./pages/index.js";
 
 // ─── Costanti ──────────────────────────────────────────────────────────────
 
@@ -662,12 +663,15 @@ async function init() {
 
 function bindHashRouter() {
   window.addEventListener("hashchange", async () => {
+    const previousRoute = state.route;
     const next = readRouteFromHash();
     state.route = normalizeRoute(next);
     state.page = 0;
     render();            // render immediato: mostra subito lo scheletro/contenuto noto
+    resetPageScroll(previousRoute, state.route);
     await refreshData();
     render();            // render con i dati aggiornati
+    resetPageScroll(previousRoute, state.route);
   });
   state.route = normalizeRoute(readRouteFromHash());
 }
@@ -677,7 +681,32 @@ function readRouteFromHash() {
 }
 
 function setRoute(route) {
-  window.location.hash = `#/${route}`;
+  const nextHash = `#/${route}`;
+  if (window.location.hash === nextHash) {
+    resetPageScroll(state.route, normalizeRoute(route), { force: true });
+    return;
+  }
+  window.location.hash = nextHash;
+}
+
+function resetPageScroll(previousRoute, nextRoute, options = {}) {
+  if (!options.force && previousRoute === nextRoute) return;
+
+  requestAnimationFrame(() => {
+    const targets = [
+      document.scrollingElement,
+      document.documentElement,
+      document.body,
+      ...document.querySelectorAll(".app-body, .main, .page")
+    ].filter(Boolean);
+
+    targets.forEach(target => {
+      target.scrollTop = 0;
+      target.scrollLeft = 0;
+    });
+
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  });
 }
 
 function normalizeRoute(route) {
@@ -786,8 +815,10 @@ function render() {
   state.mapNewMarker = null;
   state.markers = [];
   state.markersMobile = [];
-  if (!state.user && ["auth", "complete-profile"].includes(state.route)) return state.route === "auth" ? renderAuthPage() : renderLanding();
-  if (!state.user && ["new", "profile", "admin"].includes(state.route)) return renderAuthPage();
+  if (!state.user && ["auth", "complete-profile"].includes(state.route)) {
+    return state.route === "auth" ? renderPageRoute("auth") : renderPageRoute("landing");
+  }
+  if (!state.user && ["new", "profile", "admin"].includes(state.route)) return renderPageRoute("auth");
 
   // ── GUARD CENTRALE: profilo incompleto ──────────────────────────────────
   // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
@@ -798,25 +829,20 @@ function render() {
     if (window.location.hash !== "#/complete-profile") history.replaceState(null, "", "#/complete-profile");
   }
 
-  switch (state.route) {
-    case "auth":
-      return state.user ? setRoute("dashboard") : renderAuthPage();
-    case "complete-profile":
-      return renderCompleteProfile();
-    case "report":
-      return renderReportDetail();
-    case "dashboard":
-      return renderApp("dashboard");
-    case "new":
-      return renderApp("new");
-    case "profile":
-      return renderApp("profile");
-    case "admin":
-      if (state.profile?.role !== "admin") return setRoute("dashboard");
-      return renderApp("admin");
-    default:
-      return renderLanding();
-  }
+  return renderPageRoute(state.route);
+}
+
+function renderPageRoute(route) {
+  const page = pageRoutes[route] || pageRoutes.landing;
+  return page.render({
+    state,
+    setRoute,
+    renderLanding,
+    renderAuthPage,
+    renderCompleteProfile,
+    renderReportDetail,
+    renderApp
+  });
 }
 
 // ─── Landing ──────────────────────────────────────────────────────────────────
