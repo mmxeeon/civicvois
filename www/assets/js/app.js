@@ -442,9 +442,13 @@ function createSupabaseAdapter() {
       }
       const insertable = { ...payload };
       delete insertable.photoFile; // il File non va serializzato nel JSON
-      const { data, error } = await supabase.from("segnalazioni").insert(insertable);
+      const { data, error } = await supabase
+        .from("segnalazioni")
+        .insert(insertable)
+        .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
+        .single();
       if (error) throw error;
-      return Array.isArray(data) ? data[0] : data; // il record salvato (con id, created_at)
+      return data; // record salvato con id/created_at per update ottimistico stabile
     },
 
     async deleteReport(id) {
@@ -956,14 +960,14 @@ function renderAuthPage(mode = state.authMode || "login") {
       <section class="auth-copy">
         ${brandHtml()}
         <h1>Accedi alla piattaforma civica.</h1>
-        <p>Gestisci segnalazioni, foto, like, profilo e stati in una versione compatibile con Netlify. ${DEMO_MODE ? "Ora sei in modalità demo locale." : "Backend Netlify collegato."}</p>
+        <p>Gestisci segnalazioni, foto, like, profilo e stati in una versione collegata a Supabase. ${DEMO_MODE ? "Ora sei in modalità demo locale." : "Backend Supabase collegato."}</p>
       </section>
       <section class="auth-card">
         <div class="auth-tabs">
           <button class="auth-tab ${mode === "login" ? "is-active" : ""}" data-auth-tab="login">Accedi</button>
           <button class="auth-tab ${mode === "register" ? "is-active" : ""}" data-auth-tab="register">Registrati</button>
         </div>
-        ${DEMO_MODE ? `<div class="notice"><strong>Modalità demo attiva</strong>Il sito funziona in locale. Online usa Netlify Functions e Netlify Blobs.</div>` : ""}
+        ${DEMO_MODE ? `<div class="notice"><strong>Modalità demo attiva</strong>Il sito funziona in locale. Online usa Supabase per dati, auth e storage.</div>` : ""}
         <div id="auth-form-wrap">${mode === "login" ? loginFormHtml() : registerFormHtml()}</div>
       </section>
     </main>
