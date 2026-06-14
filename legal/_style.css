@@ -1,0 +1,22 @@
+/* Stile pagine legali CivicVois */
+:root{--navy:#0b1020;--navy2:#1b2540;--teal:#14b8a6;--teal3:#2dd4bf;--ink:#e5e7eb;--mut:#9ca3af;--bord:rgba(255,255,255,.1)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;background:linear-gradient(160deg,#0b1020,#060d1a 60%,#020611);color:var(--ink);line-height:1.65;-webkit-text-size-adjust:100%}
+.wrap{max-width:760px;margin:0 auto;padding:32px 20px 80px}
+header.top{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid var(--bord);position:sticky;top:0;background:rgba(11,16,32,.85);backdrop-filter:blur(12px);z-index:10}
+header.top img{width:34px;height:34px;border-radius:9px}
+header.top b{font-size:1.05rem;letter-spacing:-.02em}
+header.top a{margin-left:auto;color:var(--teal3);text-decoration:none;font-weight:600;font-size:.9rem}
+h1{font-size:1.9rem;font-weight:900;letter-spacing:-.04em;margin:22px 0 6px}
+.upd{color:var(--mut);font-size:.85rem;margin-bottom:22px}
+h2{font-size:1.15rem;font-weight:800;margin:26px 0 8px;color:#fff}
+p,li{color:#cbd5e1;font-size:.96rem;margin-bottom:10px}
+ul{padding-left:22px;margin-bottom:10px}
+a{color:var(--teal3)}
+.box{background:rgba(20,184,166,.08);border:1px solid rgba(45,212,191,.3);border-radius:14px;padding:16px 18px;margin:18px 0}
+.warn{background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.35)}
+.warn b{color:#fbbf24}
+footer{border-top:1px solid var(--bord);padding:24px 20px;text-align:center;color:var(--mut);font-size:.82rem}
+footer a{margin:0 8px}
+.nav{display:flex;flex-wrap:wrap;gap:10px;margin:24px 0}
+.nav a{display:inline-block;padding:8px 14px;border:1px solid var(--bord);border-radius:999px;text-decoration:none;color:var(--ink);font-size:.85rem;font-weight:600}
