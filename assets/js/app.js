@@ -3118,10 +3118,11 @@ async function createReport(form) {
       state.totalReports = (state.totalReports || 0) + 1;
     }
 
-    toast("Segnalazione pubblicata.", "success");
     setRoute("dashboard");
     // Riallinea col server in background (senza bloccare la UI)
     refreshData().then(render).catch(() => {});
+    // Schermata di conferma con recap (FASE 3), al posto del solo toast
+    showReportConfirmation(payload);
   } catch (error) {
     console.error(error);
     toast(error.message || "Non sono riuscito a pubblicare la segnalazione.", "error");
@@ -3241,6 +3242,43 @@ async function deleteReport(id) {
 }
 
 // ─── Drawer dettaglio ─────────────────────────────────────────────────────────
+
+// Schermata di conferma mostrata dopo l'invio di una segnalazione (FASE 3).
+// Riusa le classi del drawer per coerenza grafica; il recap usa i dati del payload.
+function showReportConfirmation(payload = {}) {
+  const indirizzo = [payload.via, payload.civico, payload.comune].filter(Boolean).join(", ") || payload.comune || "—";
+  const backdrop = document.createElement("div");
+  backdrop.className = "drawer-backdrop";
+  backdrop.innerHTML = `
+    <article class="drawer" role="dialog" aria-modal="true" aria-label="Segnalazione pubblicata">
+      <div class="drawer-content">
+        <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;padding-top:6px;">
+          <div style="width:64px;height:64px;border-radius:50%;background:rgba(16,185,129,0.15);display:grid;place-items:center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h2 class="drawer-title" style="margin:0;">Segnalazione pubblicata!</h2>
+          <p class="drawer-desc" style="margin:0;">È stata registrata ed è ora visibile nella dashboard.</p>
+        </div>
+        <div style="height:14px"></div>
+        <div class="detail-grid">
+          <div class="detail-box detail-box--wide"><b>Titolo</b><span>${escapeHtml(payload.titolo || "—")}</span></div>
+          <div class="detail-box"><b>Categoria</b><span>${escapeHtml(capitalize(payload.tipo || "—"))}</span></div>
+          <div class="detail-box"><b>Priorità</b><span>${escapeHtml(capitalize(payload.priorita || "media"))}</span></div>
+          <div class="detail-box detail-box--wide"><b>Indirizzo</b><span>${escapeHtml(indirizzo)}</span></div>
+        </div>
+        <div class="drawer-actions">
+          <button class="btn btn-primary confirm-go-dashboard" type="button">Vai alla dashboard</button>
+          <button class="btn btn-soft confirm-new-report" type="button">Crea un'altra</button>
+        </div>
+      </div>
+    </article>
+  `;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.querySelector(".confirm-go-dashboard").addEventListener("click", close);
+  backdrop.querySelector(".confirm-new-report").addEventListener("click", () => { close(); setRoute("new"); });
+  backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+}
 
 function openReportDrawer(id) {
   const report = state.reports.find(r => String(r.id) === String(id));
