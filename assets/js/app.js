@@ -661,7 +661,7 @@ function normalizeRoute(route) {
     state.reportId = route.slice("report/".length);
     return "report";
   }
-  if (["dashboard", "new", "profile", "admin", "settings", "complete-profile"].includes(route) && !state.user) return "auth";
+  if (["new", "profile", "admin", "settings", "complete-profile"].includes(route) && !state.user) return "auth";
   if (route === "settings") return "profile";
   // Guard: con profilo incompleto, ogni pagina privata diventa "complete-profile"
   if (state.user && isProfileIncomplete(state.profile) && route !== "complete-profile") {
@@ -762,7 +762,7 @@ function render() {
   state.markers = [];
   state.markersMobile = [];
   if (!state.user && ["auth", "complete-profile"].includes(state.route)) return state.route === "auth" ? renderAuthPage() : renderLanding();
-  if (!state.user && ["dashboard", "new", "profile", "admin"].includes(state.route)) return renderAuthPage();
+  if (!state.user && ["new", "profile", "admin"].includes(state.route)) return renderAuthPage();
 
   // ── GUARD CENTRALE: profilo incompleto ──────────────────────────────────
   // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
@@ -1365,8 +1365,10 @@ function renderApp(active) {
           ${navHtml(active)}
         </div>
         <div class="side-bottom">
-          ${userMiniHtml()}
-          <button class="btn btn-ghost" id="logout-btn">Esci</button>
+          ${state.user
+            ? `${userMiniHtml()}
+          <button class="btn btn-ghost" id="logout-btn">Esci</button>`
+            : `<button class="btn btn-primary" data-route="auth">Accedi</button>`}
         </div>
       </aside>
 
@@ -3652,10 +3654,10 @@ function navHtml(active) {
   const isAdmin = state.profile?.role === "admin";
   const items = [
     navItem("dashboard", "🏠", "Dashboard", active),
-    navItem("new", "+", "Nuova segnalazione", active, { plus: true }),
-    navItem("profile", profileNavIconHtml(), "Profilo", active, { htmlIcon: true })
+    navItem("new", "+", "Nuova segnalazione", active, { plus: true })
   ];
 
+  if (state.user) items.push(navItem("profile", profileNavIconHtml(), "Profilo", active, { htmlIcon: true }));
   if (isAdmin) items.push(navItem("admin", "🛠️", "Admin", active));
 
   return `
