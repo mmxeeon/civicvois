@@ -102,7 +102,7 @@ function niceBackendError(error, fallback = "Operazione non riuscita.") {
   }
   if (message.includes("timeout")) return "La richiesta ha impiegato troppo tempo. Riprova.";
   if (message.includes("invalid login credentials")) return "Email o password non corretti.";
-  if (message.includes("email not confirmed")) return "Accesso non riuscito. Controlla email e password.";
+  if (message.includes("email not confirmed")) return "Email non ancora confermata: controlla la posta per il link di conferma prima di accedere.";
   if (message.includes("already registered") || message.includes("user already registered")) return "Questo indirizzo email è già registrato. Vai su Accedi.";
   if (message.includes("duplicate") && message.includes("username")) return "Username già usato. Scegline uno diverso.";
   if (message.includes("row-level security") || message.includes("permess")) return `${fallback} Riprova tra poco.`;

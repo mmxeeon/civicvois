@@ -4305,3 +4305,10 @@ html, body {
   .profile-trust-label { font-size: 0.85rem; }
   .profile-trust-sub { font-size: 0.72rem; }
 }
+
+/* Filtri dashboard: colonna singola sui telefoni stretti, così i nomi lunghi
+   (es. "Monza e della Brianza", "Tutte le categorie") non vengono troncati
+   dal <select> nativo nella griglia 2x2. */
+@media (max-width: 520px) {
+  .filters-grid { grid-template-columns: 1fr; }
+}
