@@ -54,10 +54,6 @@
 	<string>UIStatusBarStyleLightContent</string>
 	<key>UIStatusBarHidden</key>
 	<false/>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>CivicVois usa la tua posizione per georeferenziare le segnalazioni e mostrarti quelle vicine.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>CivicVois usa la tua posizione per georeferenziare le segnalazioni e mostrarti quelle vicine.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>CivicVois usa la fotocamera per scattare foto da allegare alle segnalazioni civiche.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
