@@ -1,4 +1,4 @@
-import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE, API_BASE_URL, IS_NATIVE_APP, GOOGLE_WEB_CLIENT_ID, FACEBOOK_APP_ID } from "./config.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE, IS_NATIVE_APP, GOOGLE_WEB_CLIENT_ID, FACEBOOK_APP_ID } from "./config.js";
 import { createSupabaseClient } from "./supabase-client.js";
 
 // ─── Costanti ──────────────────────────────────────────────────────────────
@@ -27,9 +27,11 @@ const CATEGORIES = [
 const STATUSES = ["nuova", "verificata", "in carico", "risolta", "archiviata"];
 const PRIORITIES = ["bassa", "media", "alta", "urgente"];
 
+// Lista comuni servita LOCALMENTE (assets/data/comuni.json): niente più fetch da
+// CDN a runtime (fix audit C-13) → funziona offline e senza esporre l'IP a terzi.
+// Se il file locale non fosse disponibile, resta il fallback statico FALLBACK_LOCATIONS.
 const ITALY_LOCATION_SOURCES = [
-  "https://cdn.jsdelivr.net/gh/matteocontrini/comuni-json@master/comuni.json",
-  "https://raw.githubusercontent.com/matteocontrini/comuni-json/master/comuni.json"
+  "assets/data/comuni.json"
 ];
 
 const FALLBACK_LOCATIONS = [
@@ -123,6 +125,31 @@ function cleanUsername(value) {
 
 function clean(value) {
   return String(value || "").trim();
+}
+
+// Filtro contenuti UGC: blocca alla fonte i termini palesemente offensivi prima
+// che la segnalazione venga pubblicata (requisito App Store Guideline 1.2 / Play
+// UGC). È volutamente conservativo e con confine di parola per ridurre i falsi
+// positivi; la moderazione (coda admin + blocco utenti) gestisce i casi residui.
+const PROHIBITED_TERMS = [
+  "vaffanculo", "vaffanc", "stronzo", "stronza", "stronzi", "coglione", "coglioni",
+  "puttana", "puttane", "troia", "troie", "bastardo", "bastarda", "ricchione",
+  "frocio", "froci", "negro", "negra", "negri", "mongoloide", "ritardato",
+  "handicappato", "zoccola", "checca", "terrone", "terroni",
+  "fuck", "shit", "bitch", "asshole", "nigger", "faggot", "cunt", "retard", "whore"
+];
+
+function normalizeForFilter(text) {
+  return String(text || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+// Restituisce true se uno dei testi contiene un termine proibito come parola intera.
+function hasProhibitedContent(...texts) {
+  const haystack = normalizeForFilter(texts.join(" "));
+  return PROHIBITED_TERMS.some(term => {
+    const t = normalizeForFilter(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(haystack);
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -535,9 +562,7 @@ function installDebugHelpers() {
         currentPage: state?.page || 0,
         totalReports: state?.totalReports || 0,
         origin: window.location.origin,
-        isNativeApp: IS_NATIVE_APP,
-        apiBaseUrl: API_BASE_URL,
-        apiProxy: `${API_BASE_URL}/civicvois-api`
+        isNativeApp: IS_NATIVE_APP
       };
     },
     async testRest() {
@@ -1080,10 +1105,10 @@ function socialAuthHtml() {
         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.91c1.7-1.57 2.69-3.88 2.69-6.61z" fill="#4285F4"/><path d="M9 18c2.43 0 4.46-.8 5.95-2.18l-2.91-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z" fill="#34A853"/><path d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z" fill="#FBBC05"/><path d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z" fill="#EA4335"/></svg>
         <span>Continua con Google</span>
       </button>
-      <button class="btn btn-social btn-social-facebook" type="button" data-social-provider="facebook">
+      ${FACEBOOK_APP_ID ? `<button class="btn btn-social btn-social-facebook" type="button" data-social-provider="facebook">
         <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="#1877F2" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/><path fill="#fff" d="M16.671 15.543l.532-3.47h-3.328v-2.25c0-.949.465-1.874 1.956-1.874h1.513V4.997s-1.374-.235-2.686-.235c-2.741 0-4.533 1.661-4.533 4.669v2.642H7.078v3.47h3.047v8.385a12.07 12.07 0 0 0 3.75 0v-8.385h2.796z"/></svg>
         <span>Continua con Facebook</span>
-      </button>
+      </button>` : ""}
       <p class="social-eula">Continuando accetti i <a href="https://civicvois.it/legal/termini.html" target="_blank" rel="noopener">Termini</a> e la <a href="https://civicvois.it/legal/privacy.html" target="_blank" rel="noopener">Privacy</a> di CivicVois.</p>
     </div>
   `;
@@ -3111,6 +3136,9 @@ async function createReport(form) {
   }
   if (!payload.photoFile) {
     return toast("Aggiungi almeno una foto: è obbligatoria per la segnalazione.", "error");
+  }
+  if (hasProhibitedContent(payload.titolo, payload.descrizione)) {
+    return toast("Il testo contiene termini offensivi: modifica titolo o descrizione prima di inviare.", "error");
   }
 
   // Verifica indirizzo OBBLIGATORIA e bloccante: l'invio è permesso solo con

@@ -1,5 +1,5 @@
-import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE, API_BASE_URL, IS_NATIVE_APP } from "./config.js";
-import { createProxySupabaseClient } from "./supabase-proxy.js";
+import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE, IS_NATIVE_APP, GOOGLE_WEB_CLIENT_ID, FACEBOOK_APP_ID } from "./config.js";
+import { createSupabaseClient } from "./supabase-client.js";
 
 // ─── Costanti ──────────────────────────────────────────────────────────────
 
@@ -27,9 +27,11 @@ const CATEGORIES = [
 const STATUSES = ["nuova", "verificata", "in carico", "risolta", "archiviata"];
 const PRIORITIES = ["bassa", "media", "alta", "urgente"];
 
+// Lista comuni servita LOCALMENTE (assets/data/comuni.json): niente più fetch da
+// CDN a runtime (fix audit C-13) → funziona offline e senza esporre l'IP a terzi.
+// Se il file locale non fosse disponibile, resta il fallback statico FALLBACK_LOCATIONS.
 const ITALY_LOCATION_SOURCES = [
-  "https://cdn.jsdelivr.net/gh/matteocontrini/comuni-json@master/comuni.json",
-  "https://raw.githubusercontent.com/matteocontrini/comuni-json/master/comuni.json"
+  "assets/data/comuni.json"
 ];
 
 const FALLBACK_LOCATIONS = [
@@ -44,7 +46,7 @@ const FALLBACK_LOCATIONS = [
   { nome: "Roma", provincia: { nome: "Roma", sigla: "RM" }, regione: { nome: "Lazio" } }
 ];
 
-const PAGE_SIZE = 50; // segnalazioni per pagina
+const PAGE_SIZE = 10; // home privata: massimo 10 segnalazioni (mappa sempre visibile, niente scroll infinito)
 
 // ─── Helpers DOM ──────────────────────────────────────────────────────────────
 
@@ -57,9 +59,9 @@ const app = $("#app");
 const hasSupabaseConfig = Boolean(SUPABASE_URL?.startsWith("https://") && SUPABASE_ANON_KEY?.length > 20);
 const DEMO_MODE = FORCE_DEMO_MODE || !hasSupabaseConfig;
 
-const supabase = DEMO_MODE ? null : createProxySupabaseClient({
-  supabaseUrl: SUPABASE_URL,
-  anonKey: SUPABASE_ANON_KEY
+const supabase = DEMO_MODE ? null : createSupabaseClient({
+  url: SUPABASE_URL,
+  key: SUPABASE_ANON_KEY
 });
 
 // ─── Retry helper ─────────────────────────────────────────────────────────────
@@ -96,12 +98,16 @@ function wait(ms) {
 function niceBackendError(error, fallback = "Operazione non riuscita.") {
   const raw = String(error?.message || error?.error_description || error || "").trim();
   const message = raw.toLowerCase();
-  if (message.includes("failed to fetch")) return `${fallback} Connessione non riuscita. Controlla che il deploy includa netlify/functions e che le Functions siano pubblicate.`;
+  // Errori di rete: messaggio comprensibile, niente gergo tecnico
+  if (message.includes("failed to fetch") || message.includes("networkerror") || message.includes("network request failed")) {
+    return "Connessione assente. Controlla la rete e riprova.";
+  }
+  if (message.includes("timeout")) return "La richiesta ha impiegato troppo tempo. Riprova.";
   if (message.includes("invalid login credentials")) return "Email o password non corretti.";
-  if (message.includes("email not confirmed")) return "Accesso non riuscito. Controlla email e password.";
+  if (message.includes("email not confirmed")) return "Email non ancora confermata: controlla la posta per il link di conferma prima di accedere.";
   if (message.includes("already registered") || message.includes("user already registered")) return "Questo indirizzo email è già registrato. Vai su Accedi.";
   if (message.includes("duplicate") && message.includes("username")) return "Username già usato. Scegline uno diverso.";
-  if (message.includes("violates row-level security") || message.includes("row-level security")) return `${fallback} Permessi backend da correggere.`;
+  if (message.includes("row-level security") || message.includes("permess")) return `${fallback} Riprova tra poco.`;
   return raw || fallback;
 }
 
@@ -121,13 +127,38 @@ function clean(value) {
   return String(value || "").trim();
 }
 
+// Filtro contenuti UGC: blocca alla fonte i termini palesemente offensivi prima
+// che la segnalazione venga pubblicata (requisito App Store Guideline 1.2 / Play
+// UGC). È volutamente conservativo e con confine di parola per ridurre i falsi
+// positivi; la moderazione (coda admin + blocco utenti) gestisce i casi residui.
+const PROHIBITED_TERMS = [
+  "vaffanculo", "vaffanc", "stronzo", "stronza", "stronzi", "coglione", "coglioni",
+  "puttana", "puttane", "troia", "troie", "bastardo", "bastarda", "ricchione",
+  "frocio", "froci", "negro", "negra", "negri", "mongoloide", "ritardato",
+  "handicappato", "zoccola", "checca", "terrone", "terroni",
+  "fuck", "shit", "bitch", "asshole", "nigger", "faggot", "cunt", "retard", "whore"
+];
+
+function normalizeForFilter(text) {
+  return String(text || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+// Restituisce true se uno dei testi contiene un termine proibito come parola intera.
+function hasProhibitedContent(...texts) {
+  const haystack = normalizeForFilter(texts.join(" "));
+  return PROHIBITED_TERMS.some(term => {
+    const t = normalizeForFilter(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(haystack);
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  ADAPTER BACKEND
 //  Interfaccia uniforme: backend.login(), backend.register(), ecc.
 //  Internamente usa il demo locale oppure la Netlify Function/Supabase.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const backend = DEMO_MODE ? createDemoAdapter() : createNetlifyAdapter();
+const backend = DEMO_MODE ? createDemoAdapter() : createSupabaseAdapter();
 
 function createDemoAdapter() {
   const demoDb = createDemoBackend();
@@ -215,7 +246,7 @@ function createDemoAdapter() {
   };
 }
 
-function createNetlifyAdapter() {
+function createSupabaseAdapter() {
   return {
     isDemo: false,
 
@@ -256,8 +287,40 @@ function createNetlifyAdapter() {
       return { user: data.user, session: data.session, profile };
     },
 
+    async socialLogin({ provider, token, profileHint }) {
+      // Supabase verifica l'id-token col provider (audience = i Client ID configurati).
+      const { data, error } = await supabase.auth.signInWithIdToken({ provider, token });
+      if (error) throw new Error(niceBackendError(error, "Accesso social non riuscito."));
+      const profile = await this._ensureProfile(data.user, profileHint || {});
+      return { user: data.user, session: data.session, profile };
+    },
+
     async logout() {
       await supabase.auth.signOut();
+    },
+
+    async deleteAccount() {
+      await supabase.deleteAccount();   // cancella profilo + segnalazioni + like lato server
+      await supabase.auth.signOut();     // poi pulisce la sessione locale
+    },
+
+    // ── Moderazione contenuti ──────────────────────────────────────────────
+    async reportContent(targetId, reason = "") {
+      await supabase.moderation({ action: "report", targetId, reason });
+    },
+    async blockUser(targetUserId) {
+      await supabase.moderation({ action: "block", targetUserId });
+    },
+    async fetchBlocks() {
+      const res = await supabase.moderation({ action: "list-blocks" });
+      return new Set(res?.data || []);
+    },
+    async fetchModerationReports() {
+      const res = await supabase.moderation({ action: "list-reports" });
+      return res?.data || [];
+    },
+    async resolveModerationReport(reportId) {
+      await supabase.moderation({ action: "resolve-report", reportId });
     },
 
     async restoreSession() {
@@ -266,6 +329,23 @@ function createNetlifyAdapter() {
       const user = data.session.user;
       const profile = await this._loadProfile(user.id);
       return { user, session: data.session, profile };
+    },
+
+    async fetchReportById(id) {
+      const { data, error } = await withRetry(() =>
+        supabase
+          .from("segnalazioni")
+          .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
+          .eq("id", id)
+          .maybeSingle()
+      );
+      if (error || !data) return null;
+      let profiles = null;
+      if (data.user_id) {
+        const { data: p } = await supabase.from("profiles").select("id,username,full_name,avatar_url,comune,provincia").eq("id", data.user_id).maybeSingle();
+        profiles = p || null;
+      }
+      return { ...data, profiles };
     },
 
     async fetchReports({ page = 0 } = {}) {
@@ -311,6 +391,20 @@ function createNetlifyAdapter() {
       return new Set((data || []).map(row => row.segnalazione_id));
     },
 
+    // Tutte le segnalazioni dell'utente (non paginate): serve per statistiche
+    // di profilo corrette, indipendenti dalla pagina/filtri della dashboard.
+    async fetchUserReports(userId) {
+      const { data, error } = await withRetry(() =>
+        supabase
+          .from("segnalazioni")
+          .select("id,user_id,titolo,tipo,descrizione,stato,priorita,comune,provincia,via,civico,photo_url,like_count,created_at")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false })
+      );
+      if (error) throw error;
+      return data || [];
+    },
+
     async fetchProfile(userId) {
       return this._loadProfile(userId);
     },
@@ -319,9 +413,14 @@ function createNetlifyAdapter() {
       if (payload.avatarFile instanceof File && payload.avatarFile.size > 0) {
         payload.avatar_url = await this.uploadPhoto(payload.avatarFile, "avatars");
       }
-      const { error } = await supabase
+      // UPSERT (non update): il backend legge il profilo per chiave diretta,
+      // strong-consistent. Evita il bug per cui un profilo appena creato (login
+      // social) non viene trovato dalla list eventually-consistent e l'update
+      // fallisce silenziosamente.
+      const { data, error } = await supabase
         .from("profiles")
-        .update({
+        .upsert({
+          id: userId,
           full_name: payload.full_name,
           username: payload.username,
           bio: payload.bio,
@@ -330,18 +429,21 @@ function createNetlifyAdapter() {
           comune: payload.comune,
           avatar_url: payload.avatar_url,
           updated_at: new Date().toISOString()
-        })
-        .eq("id", userId);
+        }, { onConflict: "id" });
       if (error) throw error;
-      return this._loadProfile(userId);
+      const saved = Array.isArray(data) ? data[0] : data;
+      return saved || this._loadProfile(userId);
     },
 
     async createReport(payload) {
       if (payload.photoFile instanceof File && payload.photoFile.size > 0) {
         payload.photo_url = await this.uploadPhoto(payload.photoFile, "report-photos");
       }
-      const { error } = await supabase.from("segnalazioni").insert(payload);
+      const insertable = { ...payload };
+      delete insertable.photoFile; // il File non va serializzato nel JSON
+      const { data, error } = await supabase.from("segnalazioni").insert(insertable);
       if (error) throw error;
+      return Array.isArray(data) ? data[0] : data; // il record salvato (con id, created_at)
     },
 
     async deleteReport(id) {
@@ -400,13 +502,21 @@ function createNetlifyAdapter() {
     },
 
     async _ensureProfile(user, extra = {}) {
+      // Se il profilo esiste già ed è completo (ha il comune), NON lo
+      // sovrascriviamo con i metadata del login (che al re-login possono essere
+      // parziali): lo restituiamo così com'è. Evita di azzerare regione/comune/bio
+      // salvati in precedenza e quindi il re-login che rimanda a "completa profilo".
+      const existing = await this._loadProfile(user.id).catch(() => null);
+      if (existing && existing.comune) {
+        return existing;
+      }
+
       const metadata = user.user_metadata || {};
       const emailName = String(user.email || "utente").split("@")[0];
       const fallbackUsername = cleanUsername(extra.username || metadata.username || emailName || `utente-${String(user.id).slice(0, 6)}`);
 
       const payload = {
         id: user.id,
-        email: user.email || extra.email || null,
         username: fallbackUsername,
         full_name: clean(extra.full_name || metadata.full_name || fallbackUsername),
         regione: clean(extra.regione || metadata.regione || ""),
@@ -452,9 +562,7 @@ function installDebugHelpers() {
         currentPage: state?.page || 0,
         totalReports: state?.totalReports || 0,
         origin: window.location.origin,
-        isNativeApp: IS_NATIVE_APP,
-        apiBaseUrl: API_BASE_URL,
-        apiProxy: `${API_BASE_URL}/civicvois-api`
+        isNativeApp: IS_NATIVE_APP
       };
     },
     async testRest() {
@@ -488,13 +596,18 @@ const state = {
   totalReports: 0,
   page: 0,
   likes: new Set(),
+  pendingReports: [],   // segnalazioni appena create, in attesa che il server le elenchi
+  myStats: null,        // statistiche reali dell'utente (tutte le sue segnalazioni)
+  blocked: new Set(),   // id degli utenti bloccati (per nascondere i loro contenuti)
+  reportsLoaded: false, // true dopo il primo caricamento del feed (per gli skeleton)
   filters: {
-    q: "",
+    q: "",            // usato solo dalla ricerca globale (header desktop)
+    regione: "",
+    provincia: "",
     comune: "",
-    tipo: "",
-    stato: "",
-    sort: "recenti"
+    tipo: ""
   },
+  filtersInitialized: false,  // i filtri territoriali partono dal profilo, una volta sola
   locationData: buildLocationData(readLocal("cv_italy_locations_raw", null) || FALLBACK_LOCATIONS),
   locationDataSource: readLocal("cv_italy_locations_raw", null) ? "cache" : "fallback",
   map: null,
@@ -552,8 +665,9 @@ function bindHashRouter() {
     const next = readRouteFromHash();
     state.route = normalizeRoute(next);
     state.page = 0;
+    render();            // render immediato: mostra subito lo scheletro/contenuto noto
     await refreshData();
-    render();
+    render();            // render con i dati aggiornati
   });
   state.route = normalizeRoute(readRouteFromHash());
 }
@@ -567,8 +681,19 @@ function setRoute(route) {
 }
 
 function normalizeRoute(route) {
-  if (["dashboard", "new", "profile", "admin", "settings"].includes(route) && !state.user) return "auth";
+  // Dettaglio segnalazione: route pubblica e condivisibile (#/report/<id>)
+  if (route.startsWith("report/")) {
+    state.reportId = route.slice("report/".length);
+    return "report";
+  }
+  if (["new", "profile", "admin", "settings", "complete-profile"].includes(route) && !state.user) return "auth";
   if (route === "settings") return "profile";
+  // Guard: con profilo incompleto, ogni pagina privata diventa "complete-profile"
+  if (state.user && isProfileIncomplete(state.profile) && route !== "complete-profile") {
+    return "complete-profile";
+  }
+  // Profilo già completo: non lasciare l'utente bloccato sulla pagina di completamento
+  if (route === "complete-profile" && state.user && !isProfileIncomplete(state.profile)) return "dashboard";
   if (route === "admin" && state.profile?.role !== "admin") return "dashboard";
   return route || "landing";
 }
@@ -587,7 +712,30 @@ async function refreshData() {
     state.likes = new Set();
     return;
   }
-  await Promise.all([loadReports(), loadLikes()]);
+  const jobs = [loadReports(), loadLikes()];
+  if (state.user) jobs.push(loadBlocks());
+  // Statistiche profilo: caricate solo quando servono (pagina Profilo)
+  if (state.user && state.route === "profile") jobs.push(loadMyStats());
+  await Promise.all(jobs);
+}
+
+async function loadBlocks() {
+  if (!state.user || typeof backend.fetchBlocks !== "function") { state.blocked = new Set(); return; }
+  try { state.blocked = await backend.fetchBlocks(); }
+  catch { state.blocked = new Set(); }
+}
+
+async function loadMyStats() {
+  if (!state.user || typeof backend.fetchUserReports !== "function") { state.myStats = null; return; }
+  try {
+    const reports = await backend.fetchUserReports(state.user.id);
+    const likesReceived = reports.reduce((acc, r) => acc + Number(r.like_count || 0), 0);
+    const resolved = reports.filter(r => r.stato === "risolta").length;
+    state.myStats = { reports, total: reports.length, likesReceived, resolved };
+  } catch (error) {
+    console.warn("Statistiche profilo non caricate", error);
+    state.myStats = null;
+  }
 }
 
 async function loadReports() {
@@ -595,6 +743,18 @@ async function loadReports() {
     const { reports, total } = await backend.fetchReports({ page: state.page });
     state.reports = reports;
     state.totalReports = total;
+    state.reportsLoaded = true;
+
+    // Merge segnalazioni appena create: finché il server (lista eventually
+    // consistent) non le restituisce, le teniamo visibili in cima. Appena
+    // compaiono nella risposta del server, le rimuoviamo dai "pending".
+    if (state.pendingReports.length) {
+      const serverIds = new Set(reports.map(r => r.id));
+      state.pendingReports = state.pendingReports.filter(p => !serverIds.has(p.id));
+      if (state.pendingReports.length && state.page === 0) {
+        state.reports = [...state.pendingReports, ...state.reports];
+      }
+    }
   } catch (error) {
     console.error("Errore lettura segnalazioni", error);
     state.reports = [];
@@ -626,12 +786,25 @@ function render() {
   state.mapNewMarker = null;
   state.markers = [];
   state.markersMobile = [];
-  if (!state.user && ["auth"].includes(state.route)) return renderAuthPage();
-  if (!state.user && ["dashboard", "new", "profile", "admin"].includes(state.route)) return renderAuthPage();
+  if (!state.user && ["auth", "complete-profile"].includes(state.route)) return state.route === "auth" ? renderAuthPage() : renderLanding();
+  if (!state.user && ["new", "profile", "admin"].includes(state.route)) return renderAuthPage();
+
+  // ── GUARD CENTRALE: profilo incompleto ──────────────────────────────────
+  // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
+  // Google), qualunque pagina privata lo dirotta alla schermata di
+  // completamento, finché non la compila. Niente home con profilo a metà.
+  if (state.user && isProfileIncomplete(state.profile) && state.route !== "complete-profile" && state.route !== "report") {
+    state.route = "complete-profile";
+    if (window.location.hash !== "#/complete-profile") history.replaceState(null, "", "#/complete-profile");
+  }
 
   switch (state.route) {
     case "auth":
       return state.user ? setRoute("dashboard") : renderAuthPage();
+    case "complete-profile":
+      return renderCompleteProfile();
+    case "report":
+      return renderReportDetail();
     case "dashboard":
       return renderApp("dashboard");
     case "new":
@@ -658,7 +831,7 @@ function renderLanding() {
           <nav class="nav-desktop" aria-label="Navigazione principale">
             <a class="nav-link" href="#come-funziona">Come funziona</a>
             <a class="nav-link" href="#vantaggi">Vantaggi</a>
-            <a class="nav-link" href="#segnalazioni">Segnalazioni</a>
+            <a class="nav-link" href="#/dashboard">Segnalazioni</a>
           </nav>
           <div class="header-actions">
             ${state.user ? `<button class="btn btn-ghost" data-route="dashboard">Dashboard</button>` : `<button class="btn btn-ghost" data-route="auth">Accedi</button>`}
@@ -670,12 +843,14 @@ function renderLanding() {
       <main>
         <section class="hero">
           <div class="hero-copy">
-            <span class="badge">● Piattaforma civica mobile-first</span>
             <h1>La tua città, <span>segnalata meglio.</span></h1>
             <p class="hero-lead">CivicVois trasforma buche, cartelli rotti, rifiuti e problemi urbani in segnalazioni ordinate, visibili e tracciabili. Un'interfaccia seria per cittadini, comuni e amministratori.</p>
             <div class="hero-actions">
-              <button class="btn btn-primary" data-route="${state.user ? "new" : "auth"}">Crea una segnalazione</button>
-              <button class="btn btn-ghost" data-route="${state.user ? "dashboard" : "auth"}">Entra nella dashboard</button>
+              ${state.user
+                ? `<button class="btn btn-primary" data-route="new">Crea una segnalazione</button>
+                   <button class="btn btn-ghost" data-route="dashboard">Entra nella dashboard</button>`
+                : `<button class="btn btn-primary" data-route="dashboard">Esplora le segnalazioni</button>
+                   <button class="btn btn-ghost" id="hero-login">Accedi o registrati</button>`}
             </div>
             <div class="hero-stats hero-stats--square" aria-label="Statistiche CivicVois">
               <div class="stat-card"><div class="stat-value">${stats.total}</div><div class="stat-label">segnalazioni</div></div>
@@ -726,15 +901,24 @@ function renderLanding() {
             <article class="feature-card"><div class="feature-icon">✅</div><h3>Stato intervento</h3><p>Nuova, verificata, in carico, risolta o archiviata. La segnalazione diventa tracciabile.</p></article>
           </div>
         </section>
-
-        <section id="vantaggi" class="section">
-          <h2 class="section-title">Più credibile. Più veloce. Più app.</h2>
-          <p class="section-lead">Questa build è pensata per Netlify: frontend statico moderno, Netlify Functions e Netlify Blobs per autenticazione, database, immagini e like.</p>
-        </section>
       </main>
+
+      <footer class="landing-footer">
+        <p class="landing-disclaimer">CivicVois è un servizio indipendente realizzato dai cittadini. <b>Non è un canale ufficiale</b> di alcun Comune o ente pubblico: le segnalazioni non vengono inoltrate automaticamente agli enti competenti.</p>
+        <nav class="landing-legal">
+          <a href="https://civicvois.it/legal/privacy.html" target="_blank" rel="noopener">Privacy</a>
+          <a href="https://civicvois.it/legal/termini.html" target="_blank" rel="noopener">Termini</a>
+          <a href="https://civicvois.it/legal/contenuti.html" target="_blank" rel="noopener">Contenuti</a>
+          <a href="https://civicvois.it/legal/supporto.html" target="_blank" rel="noopener">Supporto</a>
+        </nav>
+        <p class="landing-copy">© ${new Date().getFullYear()} CivicVois</p>
+      </footer>
     </div>
   `;
   bindRouteButtons();
+  // CTA hero per utenti non loggati: Accedi (login) e Registrati (tab register)
+  $("#hero-login")?.addEventListener("click", () => { state.authMode = "login"; setRoute("auth"); });
+  $("#hero-register")?.addEventListener("click", () => { state.authMode = "register"; setRoute("auth"); });
 }
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -771,9 +955,91 @@ function renderAuthPage(mode = state.authMode || "login") {
   form?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const action = form.dataset.action;
-    if (action === "login") await handleLogin(new FormData(form));
-    if (action === "register") await handleRegister(new FormData(form));
+    await lockSubmit(form, async () => {
+      if (action === "login") await handleLogin(new FormData(form));
+      if (action === "register") await handleRegister(new FormData(form));
+    });
   });
+}
+
+// ─── Completamento profilo (dopo login social) ────────────────────────────────
+function renderCompleteProfile() {
+  const p = state.profile || {};
+  app.innerHTML = `
+    <main class="auth-page complete-profile-page">
+      <section class="auth-card">
+        <div class="complete-profile-head">
+          ${avatarHtml(p, "complete-profile-avatar")}
+          <h1>Completa il tuo profilo</h1>
+          <p>Bastano pochi dati per iniziare a usare CivicVois. La tua zona è obbligatoria; foto e bio sono facoltative.</p>
+        </div>
+        <form class="auth-form" id="complete-profile-form">
+          ${locationFieldsHtml(p, { required: true })}
+
+          <div class="field span-2">
+            <label>Bio <span class="field-optional">(facoltativa)</span></label>
+            <textarea class="textarea" name="bio" maxlength="1000" placeholder="Racconta brevemente chi sei o il tuo legame col territorio.">${escapeHtml(p.bio || "")}</textarea>
+          </div>
+
+          <div class="field span-2">
+            <label>Foto profilo <span class="field-optional">(facoltativa)</span></label>
+            ${avatarUploadHtml(p, "complete")}
+          </div>
+
+          <button class="btn btn-primary span-2" type="submit">Salva e continua</button>
+          <button class="btn btn-ghost span-2 mobile-logout-btn" type="button" style="margin-top:2px;">Esci</button>
+        </form>
+      </section>
+    </main>
+  `;
+
+  const form = $("#complete-profile-form");
+  bindLocationControls(form);
+  bindAvatarUpload(form);
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await lockSubmit(form, () => handleCompleteProfile(new FormData(form)));
+  });
+  document.querySelector(".mobile-logout-btn")?.addEventListener("click", handleLogout);
+}
+
+async function handleCompleteProfile(formData) {
+  const location = validateLocationSelection(formData); // regione/provincia/comune obbligatori
+  if (!location.ok) return toast(location.message, "error");
+
+  const p = state.profile || {};
+  const avatarFile = formData.get("avatar_file");
+  const payload = {
+    full_name: p.full_name || "",
+    username: p.username || "",
+    bio: clean(formData.get("bio")),                                  // facoltativa
+    avatar_url: clean(formData.get("avatar_url")) || p.avatar_url || "", // foto attuale o scelta
+    avatarFile: avatarFile instanceof File && avatarFile.size > 0 ? avatarFile : null,
+    regione: location.regione,
+    provincia: location.provincia,
+    comune: location.comune
+  };
+
+  try {
+    const saved = await backend.saveProfile(state.user.id, payload);
+    // Merge ottimistico: forziamo i valori appena inseriti così il profilo
+    // risulta sicuramente completo e il guard lascia passare alla dashboard,
+    // a prescindere da eventuali letture stale del backend.
+    state.profile = {
+      ...(state.profile || {}),
+      ...(saved || {}),
+      regione: location.regione,
+      provincia: location.provincia,
+      comune: location.comune
+    };
+    state.filtersInitialized = false; // i filtri dashboard si reimpostano dalla nuova zona
+    toast("Profilo completato. Benvenuto in CivicVois!", "success");
+    await refreshData();
+    setRoute("dashboard");
+  } catch (error) {
+    console.error(error);
+    toast(error.message || "Salvataggio non riuscito. Riprova.", "error");
+  }
 }
 
 function loginFormHtml() {
@@ -788,8 +1054,8 @@ function loginFormHtml() {
         <input class="input" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required minlength="6" />
       </div>
       <button class="btn btn-primary" type="submit">Entra in CivicVois</button>
-      <button class="btn btn-soft" type="button" id="demo-fast-login">Prova demo immediata</button>
     </form>
+    ${socialAuthHtml()}
   `;
 }
 
@@ -821,40 +1087,216 @@ function registerFormHtml() {
         <label>Foto profilo</label>
         ${avatarUploadHtml({}, "register")}
       </div>
+      <label class="eula-row span-2">
+        <input type="checkbox" name="accept_terms" required />
+        <span>Dichiaro di avere almeno 14 anni e accetto i <a href="https://civicvois.it/legal/termini.html" target="_blank" rel="noopener">Termini</a>, la <a href="https://civicvois.it/legal/privacy.html" target="_blank" rel="noopener">Privacy</a> e le <a href="https://civicvois.it/legal/contenuti.html" target="_blank" rel="noopener">regole sui contenuti</a> (tolleranza zero per contenuti offensivi).</span>
+      </label>
       <button class="btn btn-primary span-2" type="submit">Crea account</button>
     </form>
+    ${socialAuthHtml()}
   `;
 }
 
-// Demo fast login
+function socialAuthHtml() {
+  return `
+    <div class="social-auth">
+      <div class="social-divider"><span>oppure continua con</span></div>
+      <button class="btn btn-social btn-social-google" type="button" data-social-provider="google">
+        <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.91c1.7-1.57 2.69-3.88 2.69-6.61z" fill="#4285F4"/><path d="M9 18c2.43 0 4.46-.8 5.95-2.18l-2.91-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z" fill="#34A853"/><path d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z" fill="#FBBC05"/><path d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z" fill="#EA4335"/></svg>
+        <span>Continua con Google</span>
+      </button>
+      ${FACEBOOK_APP_ID ? `<button class="btn btn-social btn-social-facebook" type="button" data-social-provider="facebook">
+        <svg width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="#1877F2" d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/><path fill="#fff" d="M16.671 15.543l.532-3.47h-3.328v-2.25c0-.949.465-1.874 1.956-1.874h1.513V4.997s-1.374-.235-2.686-.235c-2.741 0-4.533 1.661-4.533 4.669v2.642H7.078v3.47h3.047v8.385a12.07 12.07 0 0 0 3.75 0v-8.385h2.796z"/></svg>
+        <span>Continua con Facebook</span>
+      </button>` : ""}
+      <p class="social-eula">Continuando accetti i <a href="https://civicvois.it/legal/termini.html" target="_blank" rel="noopener">Termini</a> e la <a href="https://civicvois.it/legal/privacy.html" target="_blank" rel="noopener">Privacy</a> di CivicVois.</p>
+    </div>
+  `;
+}
+
+
+// Social login (Google / Facebook): funziona sia su app nativa che su PWA web
 document.addEventListener("click", async (event) => {
-  if (event.target.closest("#demo-fast-login")) await handleDemoFastLogin();
+  const btn = event.target.closest("[data-social-provider]");
+  if (!btn) return;
+  event.preventDefault();
+  const provider = btn.dataset.socialProvider;
+  btn.disabled = true;
+  try {
+    if (provider === "google") {
+      if (IS_NATIVE_APP) await handleGoogleSignInNative();
+      else await handleGoogleSignInWeb();
+    } else if (provider === "facebook") {
+      if (IS_NATIVE_APP) await handleFacebookSignInNative();
+      else await handleFacebookSignInWeb();
+    }
+  } catch (error) {
+    console.error("Social login error", error);
+    const msg = (error?.message || "").toLowerCase();
+    if (msg.includes("cancel") || msg.includes("annullat") || msg.includes("closed")) {
+      // utente ha chiuso il popup, niente toast
+    } else {
+      toast("Accesso con " + provider + " non riuscito. " + (error?.message || ""), "error");
+    }
+  } finally {
+    btn.disabled = false;
+  }
 });
 
-async function handleDemoFastLogin() {
-  if (!DEMO_MODE) {
-    toast("Il login demo è disponibile solo se il backend non è configurato.", "warning");
+// ── Google: app nativa Capacitor ─────────────────────────────────────────
+async function handleGoogleSignInNative() {
+  const GoogleAuth = window.Capacitor?.Plugins?.GoogleAuth;
+  if (!GoogleAuth) throw new Error("Plugin Google non disponibile.");
+  try { await GoogleAuth.initialize?.({ scopes: ["profile", "email"] }); } catch (_) {}
+  const result = await GoogleAuth.signIn();
+  const idToken = result?.authentication?.idToken;
+  if (!idToken) throw new Error("Token Google mancante.");
+  await finalizeSocialSession("google", idToken, {
+    email: result.email,
+    full_name: result.name,
+    avatar_url: result.imageUrl
+  });
+}
+
+// ── Google: sito web (Google Identity Services) ──────────────────────────
+async function handleGoogleSignInWeb() {
+  if (!GOOGLE_WEB_CLIENT_ID) throw new Error("Google Client ID Web non configurato.");
+  await loadScriptOnce("https://accounts.google.com/gsi/client");
+  const idToken = await new Promise((resolve, reject) => {
+    let resolved = false;
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_WEB_CLIENT_ID,
+      callback: (response) => {
+        resolved = true;
+        if (response?.credential) resolve(response.credential);
+        else reject(new Error("Credenziale Google non ricevuta."));
+      },
+      auto_select: false,
+      cancel_on_tap_outside: true
+    });
+    window.google.accounts.id.prompt((notification) => {
+      // Se il popup One Tap non viene mostrato (cookie / FedCM bloccato), uso
+      // il fallback con popup OAuth esplicito.
+      if (resolved) return;
+      if (notification.isNotDisplayed?.() || notification.isSkippedMoment?.() || notification.isDismissedMoment?.()) {
+        googleOAuthPopupFallback().then(resolve, reject);
+      }
+    });
+  });
+  await finalizeSocialSession("google", idToken);
+}
+
+// Fallback: popup OAuth implicit flow per ottenere id_token
+function googleOAuthPopupFallback() {
+  return new Promise((resolve, reject) => {
+    const nonce = Math.random().toString(36).slice(2);
+    const redirectUri = window.location.origin + "/";
+    const url = "https://accounts.google.com/o/oauth2/v2/auth"
+      + "?client_id=" + encodeURIComponent(GOOGLE_WEB_CLIENT_ID)
+      + "&response_type=id_token"
+      + "&scope=" + encodeURIComponent("openid email profile")
+      + "&redirect_uri=" + encodeURIComponent(redirectUri)
+      + "&nonce=" + nonce
+      + "&prompt=select_account";
+
+    const popup = window.open(url, "googleOAuth", "width=500,height=600");
+    if (!popup) {
+      reject(new Error("Popup Google bloccato dal browser."));
+      return;
+    }
+    const timer = setInterval(() => {
+      try {
+        if (popup.closed) {
+          clearInterval(timer);
+          reject(new Error("Login annullato."));
+          return;
+        }
+        // Quando il popup arriva su redirectUri con fragment, estraggo id_token
+        const href = popup.location.href;
+        if (href && href.startsWith(redirectUri) && href.includes("id_token=")) {
+          const hash = popup.location.hash.slice(1);
+          const params = new URLSearchParams(hash);
+          const idToken = params.get("id_token");
+          clearInterval(timer);
+          popup.close();
+          if (idToken) resolve(idToken);
+          else reject(new Error("id_token mancante."));
+        }
+      } catch (_) {
+        // cross-origin durante il flow, ignora
+      }
+    }, 400);
+  });
+}
+
+// ── Facebook: app nativa Capacitor ───────────────────────────────────────
+async function handleFacebookSignInNative() {
+  const FacebookLogin = window.Capacitor?.Plugins?.FacebookLogin;
+  if (!FacebookLogin) throw new Error("Plugin Facebook non disponibile.");
+  const result = await FacebookLogin.login({ permissions: ["email", "public_profile"] });
+  const accessToken = result?.accessToken?.token || result?.accessToken;
+  if (!accessToken) throw new Error("Token Facebook mancante o login annullato.");
+  await finalizeSocialSession("facebook", accessToken);
+}
+
+// ── Facebook: sito web (FB SDK) ──────────────────────────────────────────
+async function handleFacebookSignInWeb() {
+  if (!FACEBOOK_APP_ID) throw new Error("Facebook App ID non configurato. Crea l'app su developers.facebook.com.");
+  await loadScriptOnce("https://connect.facebook.net/en_US/sdk.js");
+  if (!window.FB._initialized) {
+    window.FB.init({ appId: FACEBOOK_APP_ID, cookie: true, xfbml: false, version: "v18.0" });
+    window.FB._initialized = true;
+  }
+  const accessToken = await new Promise((resolve, reject) => {
+    window.FB.login((response) => {
+      if (response?.status === "connected" && response.authResponse?.accessToken) {
+        resolve(response.authResponse.accessToken);
+      } else {
+        reject(new Error("Login Facebook annullato."));
+      }
+    }, { scope: "email,public_profile" });
+  });
+  await finalizeSocialSession("facebook", accessToken);
+}
+
+// Helper: carica uno script esterno una sola volta
+function loadScriptOnce(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector(`script[src="${src}"]`)) return resolve();
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Impossibile caricare " + src));
+    document.head.appendChild(script);
+  });
+}
+
+async function finalizeSocialSession(provider, token, profileHint = {}) {
+  const { user, session, profile } = await backend.socialLogin({ provider, token, profileHint });
+  state.user = user;
+  state.session = session || null;
+  state.profile = profile;
+  await refreshData();
+
+  // Gli account social nascono senza comune/provincia. Se il profilo è
+  // incompleto, lo mandiamo alla pagina dedicata di completamento (il guard
+  // centrale in render()/normalizeRoute lo terrebbe comunque lì).
+  if (isProfileIncomplete(profile)) {
+    setRoute("complete-profile");
     return;
   }
-  try {
-    const { user, profile } = await backend.register({
-      email: "demo@civicvois.it",
-      password: "civicvois",
-      full_name: "Utente Demo CivicVois",
-      username: "demo",
-      comune: "Verano Brianza",
-      regione: "Lombardia",
-      provincia: "Monza e Brianza"
-    });
-    state.user = user;
-    state.profile = profile;
-    await refreshData();
-    toast("Accesso demo effettuato.", "success");
-    setRoute("dashboard");
-  } catch (error) {
-    console.error(error);
-    toast(error.message || "Accesso demo non riuscito.", "error");
-  }
+
+  toast("Accesso con " + provider + " effettuato.", "success");
+  setRoute("dashboard");
+}
+
+// Un profilo è "completo" se ha almeno nome e comune (i campi minimi per
+// partecipare in modo utile: le segnalazioni sono georeferenziate sul comune).
+function isProfileIncomplete(profile) {
+  if (!profile) return true;
+  return !profile.comune || !profile.full_name;
 }
 
 async function handleLogin(formData) {
@@ -923,6 +1365,14 @@ async function handleLogout() {
   state.profile = null;
   state.likes = new Set();
   state.reports = [];
+  state.myStats = null;
+  // I filtri territoriali si reimposteranno dal profilo del prossimo accesso
+  state.filtersInitialized = false;
+  state.filters.regione = "";
+  state.filters.provincia = "";
+  state.filters.comune = "";
+  state.filters.tipo = "";
+  state.filters.q = "";
   toast("Logout effettuato.", "success");
   setRoute("landing");
 }
@@ -940,8 +1390,10 @@ function renderApp(active) {
           ${navHtml(active)}
         </div>
         <div class="side-bottom">
-          ${userMiniHtml()}
-          <button class="btn btn-ghost" id="logout-btn">Esci</button>
+          ${state.user
+            ? `${userMiniHtml()}
+          <button class="btn btn-ghost" id="logout-btn">Esci</button>`
+            : `<button class="btn btn-primary" data-route="auth">Accedi</button>`}
         </div>
       </aside>
 
@@ -950,10 +1402,6 @@ function renderApp(active) {
 
         <!-- Header desktop: search + notifiche + CTA -->
         <header class="app-header">
-          <div class="app-header-search">
-            <svg class="app-header-search-ico" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input class="app-header-search-input" id="global-search" type="search" placeholder="Cerca per titolo, comune, autore…" />
-          </div>
           <div class="app-header-actions">
             <button class="icon-btn app-notif-btn" aria-label="Notifiche">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1005,7 +1453,6 @@ function dashboardHtml() {
         <p class="dash-subtitle">Controlla segnalazioni, priorità e aggiornamenti del territorio.</p>
       </div>
       <!-- CTA desktop visibile solo da desktop (nel mobile c'è quella separata) -->
-      <button class="btn btn-primary dash-cta-desktop" data-route="new">+ Nuova segnalazione</button>
     </div>
 
     ${DEMO_MODE ? demoNoticeHtml() : ""}
@@ -1063,67 +1510,20 @@ function dashboardHtml() {
       <!-- Colonna sinistra: filtri + feed -->
       <div class="dash-feed-col">
 
-        <!-- Sezione filtri -->
-        <div class="dash-filters-panel">
+        <!-- Sezione filtri: regione, provincia, comune (preimpostati dal profilo), categoria -->
+        <div class="dash-filters">
           <p class="dash-filters-title">Filtra segnalazioni</p>
-          <div class="filters-row-desktop">
-            <select class="select" id="filter-comune">
-              <option value="">Tutti i comuni</option>
-              ${uniqueValues(state.reports, "comune").map(v => `<option ${state.filters.comune === v ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}
-            </select>
-            <select class="select" id="filter-tipo">
-              <option value="">Tutte le categorie</option>
-              ${CATEGORIES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.tipo === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
-            </select>
-            <select class="select" id="filter-stato">
-              <option value="">Tutti gli stati</option>
-              ${STATUSES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.stato === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
-            </select>
-            <select class="select" id="filter-sort">
-              <option value="recenti" ${state.filters.sort === "recenti" ? "selected" : ""}>Più recenti</option>
-              <option value="like" ${state.filters.sort === "like" ? "selected" : ""}>Più votate</option>
-              <option value="urgenti" ${state.filters.sort === "urgenti" ? "selected" : ""}>Priorità alta</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- Filtri mobile: 2x2 dropdown + icona filtri avanzati -->
-        <div class="dash-filters-mobile">
-          <input class="input filter-search" id="filter-q" type="search" placeholder="Cerca per titolo, comune, autore…" value="${escapeAttr(state.filters.q)}" />
-          <div class="filters-row-mobile">
-            <select class="select" id="filter-comune-m">
-              <option value="">Tutti i comuni</option>
-              ${uniqueValues(state.reports, "comune").map(v => `<option ${state.filters.comune === v ? "selected" : ""}>${escapeHtml(v)}</option>`).join("")}
-            </select>
-            <select class="select" id="filter-tipo-m">
-              <option value="">Tutte le categorie</option>
-              ${CATEGORIES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.tipo === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
-            </select>
-            <select class="select" id="filter-stato-m">
-              <option value="">Tutti gli stati</option>
-              ${STATUSES.map(v => `<option value="${escapeAttr(v)}" ${state.filters.stato === v ? "selected" : ""}>${capitalize(v)}</option>`).join("")}
-            </select>
-            <select class="select" id="filter-sort-m">
-              <option value="recenti" ${state.filters.sort === "recenti" ? "selected" : ""}>Più recenti</option>
-              <option value="like" ${state.filters.sort === "like" ? "selected" : ""}>Più votate</option>
-              <option value="urgenti" ${state.filters.sort === "urgenti" ? "selected" : ""}>Priorità alta</option>
-            </select>
+          <div class="filters-grid">
+            ${dashboardFiltersHtml()}
           </div>
         </div>
 
         <!-- Feed segnalazioni -->
         <div class="feed" id="report-feed">
-          ${filtered.length ? filtered.map(reportCardHtml).join("") : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.")}
+          ${!state.reportsLoaded
+            ? skeletonFeedHtml()
+            : (filtered.length ? filtered.map(reportCardHtml).join("") : emptyHtml("Nessuna segnalazione trovata", "Prova a cambiare i filtri o crea una nuova segnalazione."))}
         </div>
-
-        <!-- Paginazione -->
-        ${totalPages > 1 ? `
-          <div class="pagination">
-            <button class="btn btn-soft btn-small" id="page-prev" ${state.page === 0 ? "disabled" : ""}>← Precedente</button>
-            <span class="pagination-info">Pagina ${state.page + 1} di ${totalPages}</span>
-            <button class="btn btn-soft btn-small" id="page-next" ${!hasMore ? "disabled" : ""}>Successiva →</button>
-          </div>
-        ` : ""}
 
         <!-- Mappa: visibile solo mobile (dopo il feed) -->
         <div class="dash-map-mobile panel panel-pad">
@@ -1157,7 +1557,12 @@ function dashboardHtml() {
 
 function newReportHtml() {
   const p = state.profile || {};
-  const isPublic = true; // default
+  // Posizione preimpostata dalla zona del profilo (l'utente può cambiarla)
+  const presetLoc = {
+    regione: cleanLocationName(p.regione || ""),
+    provincia: cleanLocationName(p.provincia || ""),
+    comune: cleanLocationName(p.comune || "")
+  };
 
   return `
     <!-- ── Topbar desktop ── -->
@@ -1167,42 +1572,121 @@ function newReportHtml() {
         <p>Aiutaci a migliorare il territorio. Compila i dettagli e invia la tua segnalazione.</p>
       </div>
       <div class="nr-topbar-right">
-        <div class="nr-security-notice">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          <div>
-            <strong>Le tue segnalazioni sono sicure</strong>
-            <span>I tuoi dati sono protetti e utilizzati solo per migliorare la tua comunità.</span>
-          </div>
-        </div>
         <button class="btn btn-dark" data-route="dashboard">← Dashboard</button>
       </div>
-    </div>
-
-    <!-- ── Stepper mobile ── -->
-    <div class="nr-stepper">
-      <div class="nr-step is-active" data-step="1"><span class="nr-step-num">1</span><span class="nr-step-label">Dettagli</span></div>
-      <div class="nr-step-line"></div>
-      <div class="nr-step" data-step="2"><span class="nr-step-num">2</span><span class="nr-step-label">Posizione</span></div>
-      <div class="nr-step-line"></div>
-      <div class="nr-step" data-step="3"><span class="nr-step-num">3</span><span class="nr-step-label">Conferma</span></div>
-      <div class="nr-step-line"></div>
-      <div class="nr-step" data-step="4"><span class="nr-step-num">4</span><span class="nr-step-label">Invia</span></div>
     </div>
 
     <form id="report-form">
       <div class="nr-layout">
 
-        <!-- ── 01 Foto ── -->
+        <!-- ── 1 Categoria ── -->
         <div class="nr-section panel">
           <div class="nr-section-header">
-            <span class="nr-section-num">01</span>
+            <span class="nr-section-num">1</span>
+            <div><h2 class="nr-section-title">Categoria <span class="nr-required">(obbligatoria)</span></h2></div>
+          </div>
+          <div class="nr-field">
+            <select class="select" name="tipo" required>
+              <option value="">Seleziona una categoria</option>
+              ${CATEGORIES.map(c => `<option value="${escapeAttr(c)}">${capitalize(c)}</option>`).join("")}
+            </select>
+            <small class="field-hint">Scegli la categoria che meglio rappresenta il problema.</small>
+          </div>
+        </div>
+
+        <!-- ── 2 Priorità ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">2</span>
+            <div><h2 class="nr-section-title">Priorità</h2></div>
+          </div>
+          <div class="nr-field">
+            <div class="nr-priority-group">
+              <input type="hidden" name="priorita" id="nr-priorita" value="bassa" />
+              <button type="button" class="nr-priority-btn is-selected" data-priority="bassa"><span class="nr-priority-dot" style="background:#10b981"></span> Bassa</button>
+              <button type="button" class="nr-priority-btn" data-priority="media"><span class="nr-priority-dot" style="background:#f59e0b"></span> Media</button>
+              <button type="button" class="nr-priority-btn" data-priority="alta"><span class="nr-priority-dot" style="background:#f43f5e"></span> Alta</button>
+              <button type="button" class="nr-priority-btn" data-priority="urgente"><span class="nr-priority-dot" style="background:#7c3aed"></span> Urgente</button>
+            </div>
+            <small class="field-hint">Indica il livello di urgenza del problema.</small>
+          </div>
+        </div>
+
+        <!-- ── 3 Posizione (solo manuale + verifica obbligatoria) ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">3</span>
+            <div>
+              <h2 class="nr-section-title">Posizione <span class="nr-required">(obbligatoria)</span></h2>
+              <p class="nr-section-sub">Inserisci l'indirizzo a mano e verificalo: serve a localizzare e filtrare le segnalazioni.</p>
+            </div>
+          </div>
+          <div class="nr-field">
+            ${locationFieldsHtml(presetLoc, { required: true })}
+            <div class="nr-address-row">
+              <div class="field nr-via-field">
+                <label>Via / indirizzo</label>
+                <input class="input" name="via" id="via-input" placeholder="Es. Via Roma" autocomplete="off" required />
+              </div>
+              <div class="field nr-civico-field">
+                <label>Civico <span class="field-optional">(facoltativo)</span></label>
+                <input class="input" name="civico" id="civico-input" placeholder="Es. 12" autocomplete="off" inputmode="numeric" />
+              </div>
+            </div>
+            <input type="hidden" name="address_verified" id="address-verified" value="" />
+            <input type="hidden" name="coordinate" id="coordinate-input" />
+            <button type="button" class="btn btn-soft nr-verify-btn" id="verify-address-btn-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              Verifica indirizzo
+            </button>
+            <div class="nr-verified-address" id="nr-verified-address" style="display:none;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <span id="nr-verified-text"></span>
+            </div>
+            <p class="field-hint nr-verify-hint">L'invio è possibile solo dopo aver verificato con successo l'indirizzo.</p>
+          </div>
+        </div>
+
+        <!-- ── 4 Titolo ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">4</span>
+            <div><h2 class="nr-section-title">Titolo <span class="nr-required">(obbligatorio)</span></h2></div>
+          </div>
+          <div class="nr-field">
+            <input class="input" name="titolo" id="nr-titolo" placeholder="Es. Buche in via Roma" required maxlength="100" autocomplete="off" />
+            <div class="nr-char-row">
+              <small class="field-hint">Sii breve e chiaro: il titolo aiuta a identificare subito il problema.</small>
+              <span class="nr-char-count" id="titolo-count">0/100</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 5 Descrizione ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">5</span>
+            <div><h2 class="nr-section-title">Descrizione <span class="nr-required">(obbligatoria)</span></h2></div>
+          </div>
+          <div class="nr-field">
+            <textarea class="textarea nr-textarea" name="descrizione" id="nr-desc" placeholder="Descrivi nel dettaglio il problema segnalato…" required minlength="12" maxlength="1000"></textarea>
+            <div class="nr-char-row">
+              <small class="field-hint">Fornisci più dettagli possibili: quando si verifica, da quanto tempo, impatto.</small>
+              <span class="nr-char-count" id="desc-count">0/1000</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 6 Foto ── -->
+        <div class="nr-section panel">
+          <div class="nr-section-header">
+            <span class="nr-section-num">6</span>
             <div>
               <h2 class="nr-section-title">Foto <span class="nr-required">(obbligatoria)</span></h2>
               <p class="nr-section-sub">Carica una o più foto per descrivere meglio il problema.</p>
             </div>
           </div>
           <div class="nr-photo-grid" id="photo-grid">
-            <!-- Upload area principale -->
             <label class="nr-photo-upload" id="upload-box">
               <input type="file" name="photo" accept="image/*" id="photo-input" multiple />
               <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
@@ -1212,7 +1696,6 @@ function newReportHtml() {
                 <span class="nr-upload-hint">JPG, PNG fino a 10MB</span>
               </div>
             </label>
-            <!-- Azioni rapide mobile -->
             <button class="nr-photo-action" type="button" id="camera-btn">
               <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
               <span>Scatta foto</span>
@@ -1229,159 +1712,19 @@ function newReportHtml() {
           </p>
         </div>
 
-        <!-- ── 02 Titolo + 03 Descrizione (griglia desktop) ── -->
-        <div class="nr-two-col">
-          <!-- 02 Titolo -->
-          <div class="nr-section panel">
-            <div class="nr-section-header">
-              <span class="nr-section-num">02</span>
-              <div>
-                <h2 class="nr-section-title">Titolo <span class="nr-required">(obbligatorio)</span></h2>
-              </div>
-            </div>
-            <div class="nr-field">
-              <input class="input" name="titolo" id="nr-titolo" placeholder="Es. Buche in via Roma" required maxlength="100" autocomplete="off" />
-              <div class="nr-char-row">
-                <small class="field-hint">Sii breve e chiaro: il titolo aiuta a identificare subito il problema.</small>
-                <span class="nr-char-count" id="titolo-count">0/100</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 03 Descrizione -->
-          <div class="nr-section panel">
-            <div class="nr-section-header">
-              <span class="nr-section-num">03</span>
-              <div>
-                <h2 class="nr-section-title">Descrizione <span class="nr-required">(obbligatoria)</span></h2>
-              </div>
-            </div>
-            <div class="nr-field">
-              <textarea class="textarea nr-textarea" name="descrizione" id="nr-desc" placeholder="Descrivi nel dettaglio il problema segnalato…" required minlength="12" maxlength="1000"></textarea>
-              <div class="nr-char-row">
-                <small class="field-hint">Fornisci più dettagli possibili: quando si verifica, da quanto tempo, impatto.</small>
-                <span class="nr-char-count" id="desc-count">0/1000</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── 04 Categoria + 05 Priorità (griglia desktop) ── -->
-        <div class="nr-two-col">
-          <!-- 04 Categoria -->
-          <div class="nr-section panel">
-            <div class="nr-section-header">
-              <span class="nr-section-num">04</span>
-              <div>
-                <h2 class="nr-section-title">Categoria <span class="nr-required">(obbligatoria)</span></h2>
-              </div>
-            </div>
-            <div class="nr-field">
-              <select class="select" name="tipo" required>
-                <option value="">Seleziona una categoria</option>
-                ${CATEGORIES.map(c => `<option value="${escapeAttr(c)}">${capitalize(c)}</option>`).join("")}
-              </select>
-              <small class="field-hint">Scegli la categoria che meglio rappresenta il problema.</small>
-            </div>
-          </div>
-
-          <!-- 05 Priorità -->
-          <div class="nr-section panel">
-            <div class="nr-section-header">
-              <span class="nr-section-num">05</span>
-              <div>
-                <h2 class="nr-section-title">Priorità</h2>
-              </div>
-            </div>
-            <div class="nr-field">
-              <div class="nr-priority-group">
-                <input type="hidden" name="priorita" id="nr-priorita" value="bassa" />
-                <button type="button" class="nr-priority-btn is-selected" data-priority="bassa">
-                  <span class="nr-priority-dot" style="background:#10b981"></span> Bassa
-                </button>
-                <button type="button" class="nr-priority-btn" data-priority="media">
-                  <span class="nr-priority-dot" style="background:#f59e0b"></span> Media
-                </button>
-                <button type="button" class="nr-priority-btn" data-priority="alta">
-                  <span class="nr-priority-dot" style="background:#f43f5e"></span> Alta
-                </button>
-                <button type="button" class="nr-priority-btn" data-priority="urgente">
-                  <span class="nr-priority-dot" style="background:#7c3aed"></span> Urgente
-                </button>
-              </div>
-              <small class="field-hint">Indica il livello di urgenza del problema.</small>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── 06 Posizione ── -->
-        <div class="nr-section panel">
-          <div class="nr-section-header">
-            <span class="nr-section-num">06</span>
-            <div>
-              <h2 class="nr-section-title">Posizione <span class="nr-required">(obbligatoria)</span></h2>
-            </div>
-          </div>
-          <div class="nr-position-layout">
-            <div class="nr-position-left">
-              <!-- Tab: inserisci / usa posizione -->
-              <div class="nr-pos-tabs">
-                <button type="button" class="nr-pos-tab is-active" data-postab="indirizzo">Inserisci indirizzo</button>
-                <button type="button" class="nr-pos-tab" data-postab="gps" id="geo-btn">Usa posizione attuale</button>
-              </div>
-              <div class="nr-pos-search">
-                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                <input class="input" name="via" id="via-input" placeholder="Cerca un indirizzo, es. Via Roma 1, Carate Brianza" autocomplete="off" />
-              </div>
-              ${locationFieldsHtml({ regione: "Lombardia", provincia: "Monza e Brianza", comune: "Verano Brianza" }, { required: true })}
-              <input type="hidden" name="address_verified" id="address-verified" value="" />
-              <div class="nr-verified-address" id="nr-verified-address" style="display:none;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                <span id="nr-verified-text"></span>
-                <button type="button" class="btn btn-ghost btn-small" id="verify-address-btn" style="margin-left:auto;">Verifica</button>
-              </div>
-              <button type="button" class="btn btn-ghost btn-small" id="verify-address-btn-2" style="margin-top:8px; width:100%;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-                Verifica indirizzo
-              </button>
-              <div>
-                <input type="hidden" name="coordinate" id="coordinate-input" />
-              </div>
-            </div>
-            <div class="nr-position-map">
-              <div class="map-panel nr-map-panel"><div id="map-new"></div></div>
-              <button type="button" class="nr-map-gps-btn" id="geo-btn-map" title="Usa la mia posizione">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Privacy fissa a pubblico (anonimo non ancora supportato) -->
+        <!-- Privacy fissa a pubblico -->
         <input type="hidden" name="privacy" value="pubblico" />
 
-      </div><!-- /nr-layout -->
-
-      <!-- ── Barra inferiore desktop ── -->
-      <div class="nr-bottom-bar">
-        <div class="nr-bottom-actions">
+        <!-- ── Bottoni: subito sotto la foto (Annulla a sinistra, Invia a destra) ── -->
+        <div class="nr-actions-row">
           <button class="btn btn-ghost" type="button" data-route="dashboard">Annulla</button>
           <button class="btn btn-primary" type="submit">
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             Invia segnalazione
           </button>
         </div>
-      </div>
 
-      <!-- ── CTA mobile sticky ── -->
-      <div class="nr-mobile-cta">
-        <button class="btn btn-primary" type="submit" style="width:100%; min-height:50px; font-size:1rem; font-weight:800; border-radius:var(--r-xl);">Invia segnalazione</button>
-        <p class="nr-mobile-privacy">
-          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          I tuoi dati sono protetti. <a href="#" style="color:var(--teal-3);">Scopri di più.</a>
-        </p>
-      </div>
-
+      </div><!-- /nr-layout -->
     </form>
   `;
 }
@@ -1390,9 +1733,11 @@ function newReportHtml() {
 
 function profileHtml() {
   const p = state.profile || {};
-  const mine = state.reports.filter(r => r.user_id === state.user?.id);
-  const likesReceived = mine.reduce((acc, r) => acc + Number(r.like_count || 0), 0);
-  const resolved = mine.filter(r => r.stato === "risolta").length;
+  // Statistiche dai dati REALI dell'utente (tutte le sue segnalazioni), non dalla
+  // pagina corrente della dashboard. Fallback alla pagina se non ancora caricate.
+  const mine = state.myStats?.reports || state.reports.filter(r => r.user_id === state.user?.id);
+  const likesReceived = state.myStats?.likesReceived ?? mine.reduce((acc, r) => acc + Number(r.like_count || 0), 0);
+  const resolved = state.myStats?.resolved ?? mine.filter(r => r.stato === "risolta").length;
   const isAdmin = p.role === "admin";
   const roleLabel = isAdmin ? "Amministratore" : "Cittadino";
   const locationLine = [p.comune, p.provincia].filter(Boolean).join(", ") || "Posizione non impostata";
@@ -1421,22 +1766,17 @@ function profileHtml() {
 
   // Punteggio affidabilità reale: combina % risolte + media like + completamento profilo
   // Va da 0 a 5. Solo se l'utente ha almeno 1 segnalazione.
-  const trustScore = (() => {
-    if (!mine.length) return null;
-    const resolvedRatio = resolved / mine.length;
-    const likeRatio = Math.min(1, likesReceived / Math.max(1, mine.length * 3));
-    const completionRatio = filled / profileFields.length;
-    const raw = (resolvedRatio * 2) + (likeRatio * 2) + (completionRatio * 1);
-    return Math.min(5, Math.max(1, raw)).toFixed(1);
-  })();
-  const trustLabel = (() => {
-    if (trustScore === null) return "Da costruire";
-    const n = Number(trustScore);
-    if (n >= 4.5) return "Affidabilità elevata";
-    if (n >= 3.5) return "Affidabilità buona";
-    if (n >= 2.5) return "Affidabilità media";
-    return "In crescita";
-  })();
+  // ── Reputazione e livelli ────────────────────────────────────────────
+  // +100 punti per ogni segnalazione pubblicata, +10 per ogni like ricevuto.
+  const REP_PER_REPORT = 100;
+  const REP_PER_LIKE = 10;
+  const LEVEL_STEP = 2000;
+  const reputation = (mine.length * REP_PER_REPORT) + (likesReceived * REP_PER_LIKE);
+  const level = Math.floor(reputation / LEVEL_STEP) + 1;       // livello 1 = 0–1999
+  const levelFloor = (level - 1) * LEVEL_STEP;                 // punti minimi del livello attuale
+  const pointsIntoLevel = reputation - levelFloor;            // progresso nel livello
+  const pointsToNext = LEVEL_STEP - pointsIntoLevel;          // mancanti al livello successivo
+  const levelPct = Math.round((pointsIntoLevel / LEVEL_STEP) * 100);
 
   // Badge basati sull'attività reale
   const badges = [
@@ -1499,15 +1839,18 @@ function profileHtml() {
           <div class="profile-reputation">
             <span class="profile-rep-icon">🛡️</span>
             <span class="profile-rep-label">Reputazione</span>
-            <span class="profile-rep-value">${(mine.length * 50 + likesReceived * 10).toLocaleString("it")} punti</span>
+            <span class="profile-rep-value">${reputation.toLocaleString("it")} punti</span>
           </div>
         </div>
       </div>
       <div class="profile-hero-right">
-        <div class="profile-trust-box">
-          <div class="profile-trust-score">${trustScore ?? "—"}<span>/5</span></div>
-          <div class="profile-trust-label">${escapeHtml(trustLabel)}</div>
-          <p class="profile-trust-sub">${trustScore === null ? "Crea la tua prima segnalazione per attivare il punteggio." : "Basato su % risolte, like ricevuti e completezza del profilo."}</p>
+        <div class="profile-level-box">
+          <div class="profile-level-top">
+            <span class="profile-level-badge">Livello ${level}</span>
+            <span class="profile-level-points">${reputation.toLocaleString("it")} pt</span>
+          </div>
+          <div class="profile-level-bar"><div class="profile-level-fill" style="width:${levelPct}%"></div></div>
+          <p class="profile-level-sub">${pointsIntoLevel.toLocaleString("it")} / ${LEVEL_STEP.toLocaleString("it")} · mancano ${pointsToNext.toLocaleString("it")} pt al livello ${level + 1}</p>
         </div>
         <div class="profile-location-box">
           <div class="profile-location-title">
@@ -1560,12 +1903,12 @@ function profileHtml() {
       </div>
       <div class="profile-kpi-card">
         <div class="profile-kpi-icon" style="background:rgba(139,92,246,0.15); color:#c4b5fd;">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 15 9l7 .5-5.5 4.5L18 21l-6-3.8L6 21l1.5-7L2 9.5 9 9z"/></svg>
         </div>
         <div>
-          <b class="profile-kpi-value">${trustScore ?? "—"}${trustScore !== null ? `<small style="font-size:1rem">/5</small>` : ""}</b>
-          <span class="profile-kpi-label">Affidabilità</span>
-          <span class="profile-kpi-sub">${escapeHtml(trustLabel)}</span>
+          <b class="profile-kpi-value">${reputation.toLocaleString("it")}</b>
+          <span class="profile-kpi-label">Reputazione</span>
+          <span class="profile-kpi-sub">Livello ${level}</span>
         </div>
       </div>
     </div>
@@ -1576,23 +1919,43 @@ function profileHtml() {
       <!-- Colonna principale -->
       <div class="profile-main">
 
-        <!-- Tab bar -->
-        <div class="profile-tabs">
-          <button class="profile-tab is-active" data-tab="segnalazioni">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-            Le mie segnalazioni
+        <!-- Sezioni come card cliccabili (coerenti con le statistiche sopra) -->
+        <div class="profile-section-cards">
+          <button class="profile-section-card is-active" data-tab="segnalazioni">
+            <div class="profile-section-icon" style="background:rgba(20,184,166,0.15); color:var(--teal-3);">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            </div>
+            <div class="profile-section-text">
+              <strong>Le mie segnalazioni</strong>
+              <span>${mine.length} pubblicate</span>
+            </div>
           </button>
-          <button class="profile-tab" data-tab="attivita">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-            Attività recenti
+          <button class="profile-section-card" data-tab="attivita">
+            <div class="profile-section-icon" style="background:rgba(59,130,246,0.15); color:#93c5fd;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            </div>
+            <div class="profile-section-text">
+              <strong>Attività recenti</strong>
+              <span>Cosa hai fatto di recente</span>
+            </div>
           </button>
-          <button class="profile-tab" data-tab="badge">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            Badge e risultati
+          <button class="profile-section-card" data-tab="badge">
+            <div class="profile-section-icon" style="background:rgba(245,158,11,0.15); color:#fbbf24;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <div class="profile-section-text">
+              <strong>Badge e risultati</strong>
+              <span>${badges.length} ottenuti</span>
+            </div>
           </button>
-          <button class="profile-tab" data-tab="impostazioni">
-            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            Impostazioni rapide
+          <button class="profile-section-card" data-tab="impostazioni">
+            <div class="profile-section-icon" style="background:rgba(139,92,246,0.15); color:#c4b5fd;">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </div>
+            <div class="profile-section-text">
+              <strong>Impostazioni rapide</strong>
+              <span>Modifica i tuoi dati</span>
+            </div>
           </button>
         </div>
 
@@ -1658,6 +2021,32 @@ function profileHtml() {
               <button class="btn btn-primary" type="submit">Salva profilo</button>
             </div>
           </form>
+
+          <!-- Esporta dati (GDPR) -->
+          <div class="danger-zone" style="border-top-color:var(--glass-border);">
+            <div>
+              <strong style="color:var(--text);">Esporta i miei dati</strong>
+              <span>Scarica una copia dei tuoi dati personali (profilo, segnalazioni, like) in formato JSON.</span>
+            </div>
+            <button class="btn btn-soft export-data-btn" type="button">Esporta dati</button>
+          </div>
+
+          <!-- Link legali -->
+          <div class="profile-legal-links">
+            <a href="https://civicvois.it/legal/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
+            <a href="https://civicvois.it/legal/termini.html" target="_blank" rel="noopener">Termini</a>
+            <a href="https://civicvois.it/legal/contenuti.html" target="_blank" rel="noopener">Regole contenuti</a>
+            <a href="https://civicvois.it/legal/supporto.html" target="_blank" rel="noopener">Supporto</a>
+          </div>
+
+          <!-- Zona pericolo: eliminazione account -->
+          <div class="danger-zone">
+            <div>
+              <strong>Elimina account</strong>
+              <span>Rimuove definitivamente il tuo profilo, le tue segnalazioni e i tuoi like. Non è reversibile.</span>
+            </div>
+            <button class="btn btn-danger delete-account-btn" type="button">Elimina account</button>
+          </div>
         </div>
       </div>
 
@@ -1731,22 +2120,30 @@ function profileHtml() {
     <!-- ── Sezione mobile: traguardi ── -->
     <div class="profile-achievements-mobile panel panel-pad">
       <div class="profile-achievements-header">
-        <h3 class="panel-title">I miei traguardi</h3>
+        <h3 class="panel-title">Livello e reputazione</h3>
       </div>
       <div style="height:12px"></div>
       <div class="profile-achievement-item">
-        <div class="profile-achievement-icon" style="background:rgba(139,92,246,0.2); color:#c4b5fd;">🛡️</div>
+        <div class="profile-achievement-icon" style="background:rgba(139,92,246,0.2); color:#c4b5fd;">🏆</div>
         <div class="profile-achievement-body">
           <div style="display:flex; align-items:center; gap:8px;">
-            <strong>Cittadino Attivo</strong>
-            <span class="chip chip-primary" style="font-size:0.7rem;">Livello 3</span>
+            <strong>${reputation.toLocaleString("it")} punti</strong>
+            <span class="chip chip-primary" style="font-size:0.7rem;">Livello ${level}</span>
           </div>
           <div class="profile-progress-bar-wrap">
-            <div class="profile-progress-bar" style="width: ${Math.min(100, Math.round(((mine.length * 50 + likesReceived * 10) / 2000) * 100))}%"></div>
+            <div class="profile-progress-bar" style="width: ${levelPct}%"></div>
           </div>
-          <span style="font-size:0.75rem; color:var(--text-3);">${(mine.length * 50 + likesReceived * 10).toLocaleString("it")} / 2.000 punti</span>
+          <span style="font-size:0.75rem; color:var(--text-3);">${pointsIntoLevel.toLocaleString("it")} / ${LEVEL_STEP.toLocaleString("it")} punti · mancano ${pointsToNext.toLocaleString("it")} al livello ${level + 1}</span>
         </div>
       </div>
+    </div>
+
+    <!-- ── Logout mobile (visibile solo su iPhone/Android, niente sidebar) ── -->
+    <div class="profile-logout-wrap">
+      <button class="btn btn-ghost mobile-logout-btn" type="button">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Esci da CivicVois
+      </button>
     </div>
   `;
 }
@@ -1819,10 +2216,71 @@ function adminHtml() {
       <div class="kpi-card"><b>${stats.resolved}</b><span>Risolte</span></div>
     </section>
 
+    <!-- Contenuti segnalati dagli utenti -->
+    <section class="panel panel-pad" style="margin-bottom:16px;">
+      <h2 class="panel-title">Contenuti segnalati <span id="mod-count" class="chip chip-danger" style="display:none;"></span></h2>
+      <p class="panel-subtitle">Segnalazioni di moderazione inviate dagli utenti. Verificale e rimuovi i contenuti in violazione.</p>
+      <div style="height:12px"></div>
+      <div id="moderation-list">${emptyHtml("Caricamento…", "")}</div>
+    </section>
+
     <section class="admin-list" aria-label="Elenco segnalazioni admin">
       ${state.reports.length ? state.reports.map(adminCardHtml).join("") : emptyHtml("Nessuna segnalazione", "Quando gli utenti pubblicano segnalazioni, le trovi qui.")}
     </section>
   `;
+}
+
+async function loadModerationList() {
+  const box = $("#moderation-list");
+  if (!box || typeof backend.fetchModerationReports !== "function") return;
+  try {
+    const reports = await backend.fetchModerationReports();
+    const countChip = $("#mod-count");
+    if (countChip) {
+      if (reports.length) { countChip.textContent = reports.length; countChip.style.display = "inline-block"; }
+      else countChip.style.display = "none";
+    }
+    if (!reports.length) {
+      box.innerHTML = emptyHtml("Nessun contenuto segnalato", "Quando un utente segnala una segnalazione, comparirà qui.");
+      return;
+    }
+    box.innerHTML = reports.map(m => {
+      const rep = state.reports.find(r => String(r.id) === String(m.target_id));
+      const title = rep ? escapeHtml(rep.titolo || rep.tipo || "Segnalazione") : "Segnalazione non più disponibile";
+      return `
+        <div class="mod-item" data-mod-id="${escapeAttr(m.id)}" data-target="${escapeAttr(m.target_id)}">
+          <div class="mod-item-body">
+            <strong>${title}</strong>
+            <span>Segnalato il ${escapeHtml(formatDate(m.created_at))}${m.reason ? " · " + escapeHtml(m.reason) : ""}</span>
+          </div>
+          <div class="mod-item-actions">
+            ${rep ? `<button class="btn btn-small btn-danger mod-remove" data-target="${escapeAttr(m.target_id)}" data-mod-id="${escapeAttr(m.id)}">Rimuovi contenuto</button>` : ""}
+            <button class="btn btn-small btn-soft mod-dismiss" data-mod-id="${escapeAttr(m.id)}">Ignora</button>
+          </div>
+        </div>`;
+    }).join("");
+    bindModerationActions();
+  } catch (error) {
+    box.innerHTML = emptyHtml("Impossibile caricare", "Riprova più tardi.");
+  }
+}
+
+function bindModerationActions() {
+  $$(".mod-remove").forEach(btn => btn.addEventListener("click", async () => {
+    const targetId = btn.dataset.target, modId = btn.dataset.modId;
+    const ok = await confirmSheet({ title: "Rimuovere il contenuto?", message: "La segnalazione verrà eliminata per tutti gli utenti.", confirmLabel: "Rimuovi", danger: true });
+    if (!ok) return;
+    try {
+      await backend.deleteReport(targetId);
+      await backend.resolveModerationReport(modId);
+      toast("Contenuto rimosso.", "success");
+      await refreshData(); render();
+    } catch (e) { toast(e.message || "Errore.", "error"); }
+  }));
+  $$(".mod-dismiss").forEach(btn => btn.addEventListener("click", async () => {
+    try { await backend.resolveModerationReport(btn.dataset.modId); loadModerationList(); }
+    catch (e) { toast(e.message || "Errore.", "error"); }
+  }));
 }
 
 function adminCardHtml(r) {
@@ -1905,49 +2363,172 @@ function bindAppEvents(active) {
     });
     // Pulsante "Completa profilo →"
     $("[data-tab-target='impostazioni']")?.addEventListener("click", () => activateProfileTab("impostazioni"));
+    // Elimina account
+    document.querySelector(".delete-account-btn")?.addEventListener("click", handleDeleteAccount);
+    // Esporta dati (GDPR)
+    document.querySelector(".export-data-btn")?.addEventListener("click", handleExportData);
   }
 
   if (active === "admin") {
     bindAdminActions();
+    loadModerationList();
   }
 }
 
-function bindFilters() {
-  // Desktop + mobile filter pairs: [desktopId, mobileId, stateKey, eventType]
-  const mappings = [
-    ["#filter-q",       "#filter-q",       "q",       "input"],
-    ["#filter-comune",  "#filter-comune-m", "comune",  "change"],
-    ["#filter-tipo",    "#filter-tipo-m",   "tipo",    "change"],
-    ["#filter-stato",   "#filter-stato-m",  "stato",   "change"],
-    ["#filter-sort",    "#filter-sort-m",   "sort",    "change"]
-  ];
+async function handleExportData() {
+  if (!state.user) return;
+  try {
+    toast("Preparo i tuoi dati…", "info");
+    const reports = await (backend.fetchUserReports ? backend.fetchUserReports(state.user.id).catch(() => []) : Promise.resolve([]));
+    const payload = {
+      esportato_il: new Date().toISOString(),
+      servizio: "CivicVois",
+      utente: {
+        id: state.user.id,
+        email: state.user.email,
+        profilo: state.profile || null
+      },
+      le_mie_segnalazioni: reports,
+      i_miei_like: [...(state.likes || [])]
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "civicvois-i-miei-dati.json";
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Dati esportati con successo.", "success");
+  } catch (error) {
+    console.error(error);
+    toast("Esportazione non riuscita. Riprova.", "error");
+  }
+}
 
-  function applyFilter(key, value) {
-    state.filters[key] = value;
-    // Sync gli altri selettori con lo stesso key
-    mappings
-      .filter(([, , k]) => k === key)
-      .forEach(([dsk, mob]) => {
-        const d = $(dsk);
-        const m = $(mob);
-        if (d && d.value !== value) d.value = value;
-        if (m && m.value !== value) m.value = value;
-      });
-    const feed = $("#report-feed");
-    if (feed) {
-      const list = filteredReports();
-      feed.innerHTML = list.length
-        ? list.map(reportCardHtml).join("")
-        : emptyHtml("Nessuna segnalazione trovata", "Prova a rimuovere qualche filtro o crea una nuova segnalazione.");
-      bindReportActions();
-      refreshMapMarkers();
+async function handleDeleteAccount() {
+  const ok = await confirmSheet({
+    title: "Eliminare l'account?",
+    message: "Verranno rimossi definitivamente il tuo profilo, tutte le tue segnalazioni e i tuoi like. L'azione non è reversibile.",
+    confirmLabel: "Elimina account",
+    danger: true
+  });
+  if (!ok) return;
+  try {
+    await backend.deleteAccount();
+    // Pulizia stato locale
+    state.user = null;
+    state.session = null;
+    state.profile = null;
+    state.likes = new Set();
+    state.reports = [];
+    state.myStats = null;
+    state.pendingReports = [];
+    state.filtersInitialized = false;
+    state.filters.regione = state.filters.provincia = state.filters.comune = state.filters.tipo = state.filters.q = "";
+    toast("Account eliminato. Arrivederci!", "success");
+    setRoute("landing");
+  } catch (error) {
+    console.error(error);
+    toast(error.message || "Eliminazione non riuscita. Riprova.", "error");
+  }
+}
+
+// Precompila i filtri territoriali con regione/provincia/comune del profilo,
+// una sola volta (poi l'utente è libero di cambiarli o azzerarli).
+function initDashboardFilters() {
+  if (state.filtersInitialized || !state.profile) return;
+  // Se l'anagrafica territoriale non è ancora caricata, riprova al prossimo render
+  if (!getRegions().length) return;
+  const p = state.profile;
+  const reg = cleanLocationName(p.regione || "");
+  const prov = cleanLocationName(p.provincia || "");
+  const com = cleanLocationName(p.comune || "");
+  // Imposta solo i valori effettivamente presenti nell'anagrafica territoriale
+  if (reg && findCanonical(getRegions(), reg)) {
+    state.filters.regione = findCanonical(getRegions(), reg);
+    if (prov && findCanonical(getProvincesForRegion(state.filters.regione), prov)) {
+      state.filters.provincia = findCanonical(getProvincesForRegion(state.filters.regione), prov);
+      if (com && findCanonical(getComuniForProvince(state.filters.regione, state.filters.provincia), com)) {
+        state.filters.comune = findCanonical(getComuniForProvince(state.filters.regione, state.filters.provincia), com);
+      }
     }
   }
+  state.filtersInitialized = true;
+}
 
-  mappings.forEach(([dsk, mob, key, event]) => {
-    $(dsk)?.addEventListener(event, (e) => applyFilter(key, e.target.value));
-    if (mob !== dsk) $(mob)?.addEventListener(event, (e) => applyFilter(key, e.target.value));
-  });
+// Markup dei 4 filtri (regione -> provincia -> comune -> categoria) a cascata.
+function dashboardFiltersHtml() {
+  initDashboardFilters();
+  const f = state.filters;
+  const regions = getRegions();
+  const provinces = f.regione ? getProvincesForRegion(f.regione) : [];
+  const comuni = (f.regione && f.provincia) ? getComuniForProvince(f.regione, f.provincia) : [];
+  const opt = (val, label, selected) => `<option value="${escapeAttr(val)}" ${selected ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  return `
+    <select class="select" id="filter-regione" aria-label="Filtra per regione">
+      ${opt("", "Tutte le regioni", !f.regione)}
+      ${regions.map(r => opt(r, r, f.regione === r)).join("")}
+    </select>
+    <select class="select" id="filter-provincia" aria-label="Filtra per provincia" ${f.regione ? "" : "disabled"}>
+      ${opt("", f.regione ? "Tutte le province" : "Prima scegli regione", !f.provincia)}
+      ${provinces.map(pv => opt(pv, pv, f.provincia === pv)).join("")}
+    </select>
+    <select class="select" id="filter-comune" aria-label="Filtra per comune" ${f.provincia ? "" : "disabled"}>
+      ${opt("", f.provincia ? "Tutti i comuni" : "Prima scegli provincia", !f.comune)}
+      ${comuni.map(c => opt(c, c, f.comune === c)).join("")}
+    </select>
+    <select class="select" id="filter-tipo" aria-label="Filtra per categoria">
+      ${opt("", "Tutte le categorie", !f.tipo)}
+      ${CATEGORIES.map(v => opt(v, capitalize(v), f.tipo === v)).join("")}
+    </select>`;
+}
+
+function bindFilters() {
+  const refreshFeed = () => {
+    const feed = $("#report-feed");
+    if (!feed) return;
+    const list = filteredReports();
+    feed.innerHTML = list.length
+      ? list.map(reportCardHtml).join("")
+      : emptyHtml("Nessuna segnalazione trovata", "Prova a cambiare i filtri o crea una nuova segnalazione.");
+    bindReportActions();
+    refreshMapMarkers();
+  };
+
+  // Rigenera il blocco filtri (per aggiornare le opzioni a cascata) e riaggancia gli eventi
+  const rerenderFilters = () => {
+    const grid = $(".dash-filters .filters-grid");
+    if (grid) {
+      grid.innerHTML = dashboardFiltersHtml();
+      attachFilterEvents();
+    }
+  };
+
+  function attachFilterEvents() {
+    $("#filter-regione")?.addEventListener("change", (e) => {
+      state.filters.regione = e.target.value;
+      state.filters.provincia = "";
+      state.filters.comune = "";
+      rerenderFilters();
+      refreshFeed();
+    });
+    $("#filter-provincia")?.addEventListener("change", (e) => {
+      state.filters.provincia = e.target.value;
+      state.filters.comune = "";
+      rerenderFilters();
+      refreshFeed();
+    });
+    $("#filter-comune")?.addEventListener("change", (e) => {
+      state.filters.comune = e.target.value;
+      refreshFeed();
+    });
+    $("#filter-tipo")?.addEventListener("change", (e) => {
+      state.filters.tipo = e.target.value;
+      refreshFeed();
+    });
+  }
+
+  attachFilterEvents();
 }
 
 function bindPagination() {
@@ -1975,14 +2556,53 @@ function bindReportActions() {
   });
 
   $$(".open-detail").forEach(btn => {
-    btn.addEventListener("click", () => openReportDrawer(btn.dataset.id));
+    btn.addEventListener("click", () => setRoute("report/" + btn.dataset.id));
   });
 
   $$(".delete-own-report").forEach(btn => {
     btn.addEventListener("click", async () => {
-      if (!confirm("Vuoi eliminare questa segnalazione?")) return;
+      const ok = await confirmSheet({
+        title: "Eliminare la segnalazione?",
+        message: "L'azione è definitiva e non può essere annullata.",
+        confirmLabel: "Elimina",
+        danger: true
+      });
+      if (!ok) return;
       await deleteReport(btn.dataset.id);
     });
+  });
+}
+
+// Bottom-sheet di conferma coerente col brand (sostituisce confirm() nativo).
+// Ritorna una Promise<boolean>.
+function confirmSheet({ title = "Confermi?", message = "", confirmLabel = "Conferma", cancelLabel = "Annulla", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "confirm-backdrop";
+    backdrop.innerHTML = `
+      <div class="confirm-sheet" role="dialog" aria-modal="true" aria-label="${escapeAttr(title)}">
+        <div class="confirm-grabber"></div>
+        <h3 class="confirm-title">${escapeHtml(title)}</h3>
+        ${message ? `<p class="confirm-text">${escapeHtml(message)}</p>` : ""}
+        <div class="confirm-actions">
+          <button class="btn btn-soft confirm-cancel" type="button">${escapeHtml(cancelLabel)}</button>
+          <button class="btn ${danger ? "btn-danger" : "btn-primary"} confirm-ok" type="button">${escapeHtml(confirmLabel)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    requestAnimationFrame(() => backdrop.classList.add("is-open"));
+
+    const close = (value) => {
+      backdrop.classList.remove("is-open");
+      setTimeout(() => backdrop.remove(), 200);
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const onKey = (e) => { if (e.key === "Escape") close(false); };
+    document.addEventListener("keydown", onKey);
+    backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(false); });
+    backdrop.querySelector(".confirm-cancel").addEventListener("click", () => close(false));
+    backdrop.querySelector(".confirm-ok").addEventListener("click", () => close(true));
   });
 }
 
@@ -2088,37 +2708,34 @@ function bindLocationControls(root = document) {
 function bindAddressVerification(form) {
   if (!form) return;
   const via = form.querySelector("#via-input");
-  const civico = form.querySelector("[name='civico']");
+  const civico = form.querySelector("#civico-input");
+  // Qualsiasi modifica ai campi posizione invalida la verifica precedente
   [via, civico].filter(Boolean).forEach(el => el.addEventListener("input", () => resetAddressVerification(form)));
-  form.querySelector("#verify-address-btn")?.addEventListener("click", async () => {
+  const runVerify = async () => {
     const result = await verifyAddressFromForm(form);
     toast(result.message, result.ok ? "success" : "error");
-  });
+  };
+  form.querySelector("#verify-address-btn-2")?.addEventListener("click", runVerify);
+  form.querySelector("#verify-address-btn")?.addEventListener("click", runVerify);
 }
 
 function resetAddressVerification(root = document) {
   const hidden = root.querySelector?.("#address-verified");
-  const status = root.querySelector?.("#address-status");
   if (hidden) hidden.value = "";
-  if (status) {
-    status.textContent = "La via viene verificata con comune, provincia e regione prima della pubblicazione.";
-    status.classList.remove("is-ok", "is-error");
-  }
+  const box = root.querySelector?.("#nr-verified-address");
+  if (box) box.style.display = "none";
 }
 
 async function verifyAddressFromForm(form, { silent = false } = {}) {
   const formData = new FormData(form);
   const location = validateLocationSelection(formData);
-  const status = form.querySelector("#address-status");
   const hidden = form.querySelector("#address-verified");
+  const box = form.querySelector("#nr-verified-address");
+  const text = form.querySelector("#nr-verified-text");
   if (!location.ok) return { ok: false, message: location.message };
   const via = clean(formData.get("via"));
   const civico = clean(formData.get("civico"));
-  if (!via) return { ok: true, message: "Via non inserita: la segnalazione userà solo il comune." };
-  if (status && !silent) {
-    status.textContent = "Verifico l'indirizzo...";
-    status.classList.remove("is-ok", "is-error");
-  }
+  if (!via) return { ok: false, message: "Inserisci la via prima di verificare l'indirizzo." };
   try {
     const query = [via, civico, location.comune, location.provincia, location.regione, "Italia"].filter(Boolean).join(", ");
     const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=1&countrycodes=it&q=${encodeURIComponent(query)}`;
@@ -2128,26 +2745,30 @@ async function verifyAddressFromForm(form, { silent = false } = {}) {
     const display = normalizeLocationKey(place?.display_name || "");
     const comuneKey = normalizeLocationKey(location.comune);
     const viaToken = normalizeLocationKey(via).split(" ").filter(Boolean).find(x => x.length > 2) || "";
+    // Indirizzo valido solo se Nominatim conferma comune e via coerenti
     const ok = Boolean(place && display.includes(comuneKey) && (!viaToken || display.includes(viaToken)));
     if (!ok) {
       if (hidden) hidden.value = "";
-      if (status) { status.textContent = "Via non verificata per il comune selezionato."; status.classList.add("is-error"); }
-      return { ok: false, message: "Via non verificata: controlla comune, via o usa il GPS." };
+      if (box) box.style.display = "none";
+      return { ok: false, message: "Indirizzo non trovato per il comune indicato: controlla via e comune." };
     }
     const lat = Number(place.lat);
     const lng = Number(place.lon);
     if (Number.isFinite(lat) && Number.isFinite(lng)) {
       const coord = form.querySelector("#coordinate-input");
-      if (coord && !coord.value) coord.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+      if (coord) coord.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
     }
     if (hidden) hidden.value = "1";
-    if (status) { status.textContent = "Via verificata correttamente."; status.classList.remove("is-error"); status.classList.add("is-ok"); }
-    return { ok: true, message: "Via verificata correttamente.", lat, lng };
+    if (box && text) {
+      text.textContent = "Indirizzo verificato: " + (place.display_name || query).split(",").slice(0, 4).join(", ");
+      box.style.display = "flex";
+    }
+    return { ok: true, message: "Indirizzo verificato correttamente.", lat, lng };
   } catch (error) {
     console.warn(error);
     if (hidden) hidden.value = "";
-    if (status) { status.textContent = "Non riesco a verificare la via adesso."; status.classList.add("is-error"); }
-    return { ok: false, message: "Verifica via non riuscita: riprova o usa GPS." };
+    if (box) box.style.display = "none";
+    return { ok: false, message: "Verifica indirizzo non riuscita: riprova tra poco." };
   }
 }
 
@@ -2249,7 +2870,8 @@ function bindNewReportForm() {
     btn.addEventListener("click", () => {
       $$(".nr-priority-btn").forEach(b => b.classList.remove("is-selected"));
       btn.classList.add("is-selected");
-      if (priorityHidden) priorityHidden.value = btn.dataset.val || "";
+      // I bottoni espongono data-priority (non data-val): leggere il valore giusto (C-05).
+      if (priorityHidden) priorityHidden.value = btn.dataset.priority || "media";
     });
   });
 
@@ -2274,7 +2896,10 @@ function bindNewReportForm() {
   const photoInput = $("#photo-input");
   const photoPreviews = $("#photo-previews");
   const MAX_PHOTOS = 5;
-  let photoFiles = [];
+  const photoFiles = [];
+  // L'input file viene svuotato dopo ogni scelta: espongo i file sul form così
+  // createReport può leggerli (C-04).
+  if (form) form._cvPhotos = photoFiles;
 
   function refreshPhotoPreviews() {
     if (!photoPreviews) return;
@@ -2308,14 +2933,14 @@ function bindNewReportForm() {
     uploadArea.style.borderColor = "";
     const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith("image/"));
     const remaining = MAX_PHOTOS - photoFiles.length;
-    photoFiles = photoFiles.concat(files.slice(0, remaining));
+    photoFiles.push(...files.slice(0, remaining));
     refreshPhotoPreviews();
   });
 
   photoInput?.addEventListener("change", () => {
     const files = Array.from(photoInput.files || []).filter(f => f.type.startsWith("image/"));
     const remaining = MAX_PHOTOS - photoFiles.length;
-    photoFiles = photoFiles.concat(files.slice(0, remaining));
+    photoFiles.push(...files.slice(0, remaining));
     photoInput.value = "";
     refreshPhotoPreviews();
   });
@@ -2329,7 +2954,7 @@ function bindNewReportForm() {
     ci.addEventListener("change", () => {
       const files = Array.from(ci.files || []);
       const remaining = MAX_PHOTOS - photoFiles.length;
-      photoFiles = photoFiles.concat(files.slice(0, remaining));
+      photoFiles.push(...files.slice(0, remaining));
       refreshPhotoPreviews();
     });
     ci.click();
@@ -2340,51 +2965,7 @@ function bindNewReportForm() {
     photoInput?.click();
   });
 
-  // ── GPS button ────────────────────────────────────────────────────────
-  $("#geo-btn-map")?.addEventListener("click", useGeolocationForNewMap);
-  $("#geo-btn")?.addEventListener("click", useGeolocation);
-
-  // ── Position tabs ─────────────────────────────────────────────────────
-  $$(".nr-pos-tab").forEach(tab => {
-    tab.addEventListener("click", () => {
-      $$(".nr-pos-tab").forEach(t => t.classList.remove("is-active"));
-      tab.classList.add("is-active");
-    });
-  });
-
-  // ── Map #map-new initialization ───────────────────────────────────────
-  setTimeout(() => {
-  const mapNewEl = $("#map-new");
-  if (mapNewEl && window.L && !state.mapNew) {
-    const center = [45.584, 9.274];
-    state.mapNew = L.map(mapNewEl, { scrollWheelZoom: false }).setView(center, 12);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "&copy; OpenStreetMap" }).addTo(state.mapNew);
-    setTimeout(() => state.mapNew?.invalidateSize(), 180);
-
-    // Click on map to set coordinates
-    state.mapNew.on("click", (e) => {
-      const lat = e.latlng.lat.toFixed(6);
-      const lng = e.latlng.lng.toFixed(6);
-      const coordInput = form.querySelector("[name='coordinate']") || form.querySelector("#coordinate-input");
-      if (coordInput) coordInput.value = `${lat}, ${lng}`;
-      // Place a marker
-      if (state.mapNewMarker) state.mapNewMarker.remove();
-      state.mapNewMarker = L.marker([lat, lng]).addTo(state.mapNew);
-      // Reverse geocode
-      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`, { headers: { "Accept": "application/json" } })
-        .then(r => r.json())
-        .then(json => {
-          const address = json.address || {};
-          setLocationFromAddress(address);
-          setInputValue("[name='via']", address.road || "");
-          setInputValue("[name='civico']", address.house_number || "");
-          const verifiedText = $("#nr-verified-text");
-          if (verifiedText) verifiedText.textContent = json.display_name || "";
-        })
-        .catch(() => {});
-    });
-  }
-  }, 60); // end setTimeout for map init
+  // (GPS e mappa rimossi: la posizione è solo manuale, con verifica obbligatoria)
 
   // ── Privacy toggle ────────────────────────────────────────────────────
   $$(".nr-privacy-option").forEach(opt => {
@@ -2399,12 +2980,28 @@ function bindNewReportForm() {
   // ── Form submit ───────────────────────────────────────────────────────
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await createReport(event.currentTarget);
+    await lockSubmit(event.currentTarget, () => createReport(event.currentTarget));
   });
 }
 
+// Disabilita i bottoni di submit di un form mentre l'operazione è in corso,
+// così un doppio tap non genera invii duplicati. Ripristina alla fine.
+async function lockSubmit(form, fn) {
+  if (!form) return fn();
+  const btns = Array.from(form.querySelectorAll('button[type="submit"], button:not([type])'));
+  const snapshot = btns.map(b => ({ b, disabled: b.disabled }));
+  btns.forEach(b => { b.disabled = true; b.classList.add("is-loading"); });
+  try {
+    return await fn();
+  } finally {
+    snapshot.forEach(({ b, disabled }) => {
+      if (document.contains(b)) { b.disabled = disabled; b.classList.remove("is-loading"); }
+    });
+  }
+}
+
 function activateProfileTab(tabName) {
-  $$(".profile-tab").forEach(t => t.classList.toggle("is-active", t.dataset.tab === tabName));
+  $$(".profile-section-card").forEach(t => t.classList.toggle("is-active", t.dataset.tab === tabName));
   $$(".profile-tab-panel").forEach(p => {
     p.style.display = p.dataset.panel === tabName ? "block" : "none";
   });
@@ -2418,8 +3015,8 @@ function activateProfileTab(tabName) {
 }
 
 function bindProfileTabs() {
-  $$(".profile-tab").forEach(tab => {
-    tab.addEventListener("click", () => activateProfileTab(tab.dataset.tab));
+  $$(".profile-section-card").forEach(card => {
+    card.addEventListener("click", () => activateProfileTab(card.dataset.tab));
   });
 }
 
@@ -2441,7 +3038,13 @@ function bindAdminActions() {
 
   $$(".delete-report").forEach(btn => {
     btn.addEventListener("click", async () => {
-      if (!confirm("Eliminare definitivamente questa segnalazione?")) return;
+      const ok = await confirmSheet({
+        title: "Eliminare definitivamente?",
+        message: "La segnalazione verrà rimossa per tutti gli utenti.",
+        confirmLabel: "Elimina",
+        danger: true
+      });
+      if (!ok) return;
       await deleteReport(btn.dataset.id);
     });
   });
@@ -2462,61 +3065,6 @@ function previewPhoto(input) {
     copy.innerHTML = `<img src="${reader.result}" alt="Anteprima foto" class="upload-preview" />`;
   };
   reader.readAsDataURL(file);
-}
-
-function useGeolocationForNewMap() {
-  if (!navigator.geolocation) return toast("Geolocalizzazione non disponibile su questo browser.", "error");
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    const lat = pos.coords.latitude;
-    const lng = pos.coords.longitude;
-    if (state.mapNew) {
-      state.mapNew.setView([lat, lng], 16);
-      if (state.mapNewMarker) state.mapNewMarker.remove();
-      state.mapNewMarker = L.marker([lat, lng]).addTo(state.mapNew);
-    }
-    const form = $("#report-form");
-    const coordInput = form?.querySelector("[name='coordinate']") || form?.querySelector("#coordinate-input");
-    if (coordInput) coordInput.value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    toast("Posizione rilevata.", "success");
-    try {
-      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-      const res = await fetch(url, { headers: { "Accept": "application/json" } });
-      const json = await res.json();
-      const address = json.address || {};
-      setLocationFromAddress(address);
-      setInputValue("[name='via']", address.road || "");
-      setInputValue("[name='civico']", address.house_number || "");
-      const verifiedText = $("#nr-verified-text");
-      if (verifiedText) verifiedText.textContent = json.display_name || "";
-    } catch (err) { console.warn(err); }
-  }, () => {
-    toast("Non riesco a recuperare la posizione. Controlla i permessi del browser.", "error");
-  }, { enableHighAccuracy: true, timeout: 9000 });
-}
-
-async function useGeolocation() {
-  if (!navigator.geolocation) return toast("Geolocalizzazione non disponibile su questo browser.", "error");
-
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    const lat = pos.coords.latitude.toFixed(6);
-    const lng = pos.coords.longitude.toFixed(6);
-    $("#coordinate-input").value = `${lat}, ${lng}`;
-    toast("Coordinate rilevate.", "success");
-
-    try {
-      const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}`;
-      const res = await fetch(url, { headers: { "Accept": "application/json" } });
-      const json = await res.json();
-      const address = json.address || {};
-      setLocationFromAddress(address);
-      setInputValue("[name='via']", address.road || "");
-      setInputValue("[name='civico']", address.house_number || "");
-    } catch (error) {
-      console.warn(error);
-    }
-  }, () => {
-    toast("Non riesco a recuperare la posizione. Controlla i permessi del browser.", "error");
-  }, { enableHighAccuracy: true, timeout: 9000 });
 }
 
 function setLocationFromAddress(address = {}) {
@@ -2555,7 +3103,11 @@ async function createReport(form) {
   if (!location.ok) return toast(location.message, "error");
 
   let coords = parseCoords(String(formData.get("coordinate") || ""));
-  const photoFile = formData.get("photo");
+  // Le foto scelte sono nell'array esposto sul form (C-04): l'input file è già
+  // stato svuotato, quindi formData.get("photo") sarebbe vuoto.
+  const formEl = form instanceof FormData ? null : form;
+  const selectedPhotos = formEl && Array.isArray(formEl._cvPhotos) ? formEl._cvPhotos : [];
+  const photoFile = selectedPhotos[0] || formData.get("photo");
 
   const payload = {
     user_id: state.user.id,
@@ -2577,26 +3129,49 @@ async function createReport(form) {
   };
 
   if (!payload.titolo || !payload.tipo || !payload.descrizione || !payload.comune) {
-    return toast("Titolo, categoria, descrizione e comune sono obbligatori.", "error");
+    return toast("Categoria, posizione, titolo e descrizione sono obbligatori.", "error");
+  }
+  if (!payload.via) {
+    return toast("Inserisci la via prima di inviare la segnalazione.", "error");
+  }
+  if (!payload.photoFile) {
+    return toast("Aggiungi almeno una foto: è obbligatoria per la segnalazione.", "error");
+  }
+  if (hasProhibitedContent(payload.titolo, payload.descrizione)) {
+    return toast("Il testo contiene termini offensivi: modifica titolo o descrizione prima di inviare.", "error");
   }
 
-  if (payload.via && String(formData.get("address_verified") || "") !== "1") {
-    const verified = await verifyAddressFromForm(form, { silent: true });
+  // Verifica indirizzo OBBLIGATORIA e bloccante: l'invio è permesso solo con
+  // indirizzo confermato da Nominatim. Se non già verificato (o invalidato da
+  // una modifica), proviamo a verificarlo ora; se fallisce, blocchiamo.
+  if (String(formData.get("address_verified") || "") !== "1") {
+    const verified = await verifyAddressFromForm(form);
     if (!verified.ok) {
-      return toast(verified.message || "Via non verificata: controlla l'indirizzo o usa il GPS.", "error");
+      return toast(verified.message || "Verifica l'indirizzo prima di inviare la segnalazione.", "error");
     }
-    if (!coords && verified.lat && verified.lng) {
+    if (verified.lat && verified.lng) {
       payload.lat = verified.lat;
       payload.lng = verified.lng;
     }
   }
 
   try {
-    await backend.createReport(payload);
+    const created = await backend.createReport(payload);
     state.page = 0;
-    await refreshData();
-    toast("Segnalazione pubblicata.", "success");
+
+    // Inserimento ottimistico: l'utente vede subito la sua segnalazione, anche
+    // se la lista del server non l'ha ancora propagata (eventual consistency).
+    if (created?.id) {
+      state.pendingReports = [created, ...state.pendingReports.filter(p => p.id !== created.id)];
+      state.reports = [created, ...state.reports.filter(r => r.id !== created.id)];
+      state.totalReports = (state.totalReports || 0) + 1;
+    }
+
     setRoute("dashboard");
+    // Riallinea col server in background (senza bloccare la UI)
+    refreshData().then(render).catch(() => {});
+    // Schermata di conferma con recap (FASE 3), al posto del solo toast
+    showReportConfirmation(payload);
   } catch (error) {
     console.error(error);
     toast(error.message || "Non sono riuscito a pubblicare la segnalazione.", "error");
@@ -2631,16 +3206,64 @@ async function updateProfile(formData) {
   }
 }
 
+const _likeInFlight = new Set();
+
 async function toggleLike(reportId) {
   if (!state.user) return setRoute("auth");
-  const alreadyLiked = state.likes.has(reportId);
+  if (_likeInFlight.has(reportId)) return; // anti doppio-tap (bug: voti duplicati)
+  _likeInFlight.add(reportId);
+
+  const wasLiked = state.likes.has(reportId);
+  const willLike = !wasLiked;
+
+  // 1) Aggiornamento OTTIMISTICO: stato + contatori locali subito, niente reload.
+  if (willLike) state.likes.add(reportId); else state.likes.delete(reportId);
+
+  const report = state.reports.find(r => r.id === reportId);
+  const prevCount = report ? Number(report.like_count || 0) : null;
+  const newCount = report ? Math.max(0, prevCount + (willLike ? 1 : -1)) : null;
+  if (report) report.like_count = newCount;
+
+  // Allinea anche le statistiche del profilo, se già caricate
+  if (state.myStats?.reports) {
+    const mr = state.myStats.reports.find(r => r.id === reportId);
+    if (mr) mr.like_count = Math.max(0, Number(mr.like_count || 0) + (willLike ? 1 : -1));
+  }
+
+  // 2) Riflette subito su DOM (card nel feed + drawer aperto) senza full render
+  applyLikeToDOM(reportId, willLike, newCount);
+
+  // 3) Sincronizza col backend; in caso di errore fa rollback
   try {
-    await backend.toggleLike(state.user.id, reportId, alreadyLiked);
-    await refreshData();
-    render();
+    await backend.toggleLike(state.user.id, reportId, wasLiked);
   } catch (error) {
     console.error(error);
+    if (willLike) state.likes.delete(reportId); else state.likes.add(reportId);
+    if (report && prevCount !== null) report.like_count = prevCount;
+    applyLikeToDOM(reportId, wasLiked, prevCount);
     toast(error.message || "Like non aggiornato.", "error");
+  } finally {
+    _likeInFlight.delete(reportId);
+  }
+}
+
+// Aggiorna in-place tutti gli elementi "like" di una segnalazione, ovunque siano
+// nel DOM (card del feed e pannello di dettaglio), senza ricostruire la pagina.
+function applyLikeToDOM(reportId, liked, count) {
+  const sel = (window.CSS && CSS.escape) ? CSS.escape(reportId) : reportId;
+  document.querySelectorAll(`.like-btn[data-id="${sel}"]`).forEach((btn) => {
+    const isDrawer = !!btn.closest(".drawer");
+    btn.classList.toggle("is-liked", liked);
+    const label = liked ? (isDrawer ? "❤️ Ti piace" : "❤️ Votata") : "🤍 Vota";
+    const shown = count == null ? (btn.querySelector(".btn-like-count")?.textContent ?? "") : count;
+    btn.innerHTML = `${label} <span class="btn-like-count">${shown}</span>`;
+    const container = btn.closest(".report-card, .drawer");
+    const chip = container?.querySelector(".like-count-chip b");
+    if (chip && count != null) chip.textContent = String(count);
+  });
+  if (count != null) {
+    const cardChip = document.querySelector(`.report-card[data-report-id="${sel}"] .like-count-chip b`);
+    if (cardChip) cardChip.textContent = String(count);
   }
 }
 
@@ -2669,6 +3292,136 @@ async function deleteReport(id) {
 
 // ─── Drawer dettaglio ─────────────────────────────────────────────────────────
 
+// ─── Dettaglio segnalazione come PAGINA (link condivisibile, FASE 3) ──────────
+function renderReportDetail() {
+  const id = state.reportId;
+  const cached = state.reports.find(r => String(r.id) === String(id));
+  if (cached) return paintReportDetail(cached);
+  // Non in cache (es. link aperto direttamente): loading + fetch per id
+  app.innerHTML = `
+    <div class="page report-detail-page">
+      <header class="site-header"><div class="header-inner">${brandHtml()}<div class="header-actions"><button class="btn btn-ghost" data-route="${state.user ? "dashboard" : "landing"}">${state.user ? "Dashboard" : "Home"}</button></div></div></header>
+      <main style="max-width:760px;margin:0 auto;padding:24px 16px;"><div class="empty-state"><strong>Caricamento segnalazione…</strong></div></main>
+    </div>`;
+  bindRouteButtons();
+  Promise.resolve(backend.fetchReportById?.(id)).then(report => {
+    if (state.route !== "report" || String(state.reportId) !== String(id)) return; // route cambiata nel frattempo
+    if (report) {
+      state.reports = [report, ...state.reports.filter(r => String(r.id) !== String(report.id))];
+      paintReportDetail(report);
+    } else {
+      paintReportNotFound();
+    }
+  }).catch(() => paintReportNotFound());
+}
+
+function paintReportNotFound() {
+  app.innerHTML = `
+    <div class="page report-detail-page">
+      <header class="site-header"><div class="header-inner">${brandHtml()}<div class="header-actions"><button class="btn btn-primary" data-route="${state.user ? "dashboard" : "landing"}">${state.user ? "Dashboard" : "Home"}</button></div></div></header>
+      <main style="max-width:760px;margin:0 auto;padding:24px 16px;">${emptyHtml("Segnalazione non trovata", "Potrebbe essere stata rimossa, oppure il link non è valido.")}</main>
+    </div>`;
+  bindRouteButtons();
+}
+
+function paintReportDetail(report) {
+  const liked = state.likes.has(report.id);
+  app.innerHTML = `
+    <div class="page report-detail-page">
+      <header class="site-header">
+        <div class="header-inner">
+          ${brandHtml()}
+          <div class="header-actions">
+            <button class="btn btn-ghost" id="rd-back">← Indietro</button>
+            <button class="btn btn-soft" id="rd-share">Copia link</button>
+          </div>
+        </div>
+      </header>
+      <main style="max-width:760px;margin:0 auto;padding:18px 16px 60px;">
+        <article class="panel panel-pad">
+          <div class="drawer-hero" style="border-radius:var(--r-lg);overflow:hidden;margin-bottom:14px;">
+            ${report.photo_url ? `<img src="${escapeAttr(report.photo_url)}" alt="${escapeAttr(report.titolo || report.tipo)}" style="width:100%;display:block;" />` : `<div class="report-placeholder">${categoryIcon(report.tipo)}</div>`}
+          </div>
+          <div class="report-meta">${statusChip(report.stato)} ${priorityChip(report.priorita)}</div>
+          <h1 class="dash-title" style="font-size:1.6rem;margin:10px 0;">${escapeHtml(report.titolo || report.tipo)}</h1>
+          ${report.descrizione ? `<p class="report-desc">${escapeHtml(report.descrizione)}</p>` : ""}
+          <div style="height:12px"></div>
+          <div class="detail-grid">
+            <div class="detail-box"><b>Categoria</b><span>${escapeHtml(capitalize(report.tipo || "—"))}</span></div>
+            <div class="detail-box"><b>Priorità</b><span>${escapeHtml(capitalize(report.priorita || "—"))}</span></div>
+            <div class="detail-box"><b>Comune</b><span>${escapeHtml(report.comune || "—")}</span></div>
+            <div class="detail-box detail-box--wide"><b>Indirizzo</b><span>${escapeHtml(formatAddress(report))}</span></div>
+            <div class="detail-box"><b>Autore</b><span>${escapeHtml(authorName(report))}</span></div>
+            <div class="detail-box"><b>Data</b><span>${escapeHtml(formatDate(report.created_at))}</span></div>
+          </div>
+          <div class="drawer-actions" style="margin-top:16px;">
+            <button class="btn btn-primary rd-like ${liked ? "is-liked" : ""}" data-id="${report.id}">${liked ? "❤️ Ti piace" : "🤍 Vota"} <span class="btn-like-count">${Number(report.like_count || 0)}</span></button>
+            <button class="btn btn-soft" data-route="dashboard">${state.user ? "Vai alla dashboard" : "Vedi le segnalazioni"}</button>
+          </div>
+        </article>
+      </main>
+    </div>
+  `;
+  bindRouteButtons();
+  $("#rd-back")?.addEventListener("click", () => { if (window.history.length > 1) window.history.back(); else setRoute(state.user ? "dashboard" : "landing"); });
+  $("#rd-share")?.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(window.location.href); toast("Link copiato negli appunti.", "success"); }
+    catch { toast("Copia automatica non riuscita: copia l'URL dalla barra del browser.", "warning"); }
+  });
+  $(".rd-like")?.addEventListener("click", async () => {
+    if (!state.user) return setRoute("auth");
+    const was = state.likes.has(report.id);
+    if (was) { state.likes.delete(report.id); report.like_count = Math.max(0, Number(report.like_count || 0) - 1); }
+    else { state.likes.add(report.id); report.like_count = Number(report.like_count || 0) + 1; }
+    paintReportDetail(report);
+    try {
+      await backend.toggleLike(state.user.id, report.id, was);
+    } catch (error) {
+      if (was) { state.likes.add(report.id); report.like_count = Number(report.like_count || 0) + 1; }
+      else { state.likes.delete(report.id); report.like_count = Math.max(0, Number(report.like_count || 0) - 1); }
+      paintReportDetail(report);
+      toast("Like non aggiornato.", "error");
+    }
+  });
+}
+
+// Schermata di conferma mostrata dopo l'invio di una segnalazione (FASE 3).
+// Riusa le classi del drawer per coerenza grafica; il recap usa i dati del payload.
+function showReportConfirmation(payload = {}) {
+  const indirizzo = [payload.via, payload.civico, payload.comune].filter(Boolean).join(", ") || payload.comune || "—";
+  const backdrop = document.createElement("div");
+  backdrop.className = "drawer-backdrop";
+  backdrop.innerHTML = `
+    <article class="drawer" role="dialog" aria-modal="true" aria-label="Segnalazione pubblicata">
+      <div class="drawer-content">
+        <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:10px;padding-top:6px;">
+          <div style="width:64px;height:64px;border-radius:50%;background:rgba(16,185,129,0.15);display:grid;place-items:center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h2 class="drawer-title" style="margin:0;">Segnalazione pubblicata!</h2>
+          <p class="drawer-desc" style="margin:0;">È stata registrata ed è ora visibile nella dashboard.</p>
+        </div>
+        <div style="height:14px"></div>
+        <div class="detail-grid">
+          <div class="detail-box detail-box--wide"><b>Titolo</b><span>${escapeHtml(payload.titolo || "—")}</span></div>
+          <div class="detail-box"><b>Categoria</b><span>${escapeHtml(capitalize(payload.tipo || "—"))}</span></div>
+          <div class="detail-box"><b>Priorità</b><span>${escapeHtml(capitalize(payload.priorita || "media"))}</span></div>
+          <div class="detail-box detail-box--wide"><b>Indirizzo</b><span>${escapeHtml(indirizzo)}</span></div>
+        </div>
+        <div class="drawer-actions">
+          <button class="btn btn-primary confirm-go-dashboard" type="button">Vai alla dashboard</button>
+          <button class="btn btn-soft confirm-new-report" type="button">Crea un'altra</button>
+        </div>
+      </div>
+    </article>
+  `;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.querySelector(".confirm-go-dashboard").addEventListener("click", close);
+  backdrop.querySelector(".confirm-new-report").addEventListener("click", () => { close(); setRoute("new"); });
+  backdrop.addEventListener("click", (event) => { if (event.target === backdrop) close(); });
+}
+
 function openReportDrawer(id) {
   const report = state.reports.find(r => String(r.id) === String(id));
   if (!report) return;
@@ -2683,40 +3436,80 @@ function openReportDrawer(id) {
         <div class="report-meta">
           ${statusChip(report.stato)}
           ${priorityChip(report.priorita)}
-          <span class="chip like-count-chip" aria-label="Numero voti">❤️ <b>${Number(report.like_count || 0)}</b></span>
         </div>
-        <div style="height:12px"></div>
-        <h2>${escapeHtml(report.titolo || report.tipo)}</h2>
-        <p style="color:var(--text-2); line-height:1.6; font-size:1.04rem;">${escapeHtml(report.descrizione || "")}</p>
+        <h2 class="drawer-title">${escapeHtml(report.titolo || report.tipo)}</h2>
+        ${report.descrizione ? `<p class="drawer-desc">${escapeHtml(report.descrizione)}</p>` : ""}
         <div class="detail-grid">
           <div class="detail-box"><b>Categoria</b><span>${escapeHtml(capitalize(report.tipo || "—"))}</span></div>
+          <div class="detail-box"><b>Priorità</b><span>${escapeHtml(capitalize(report.priorita || "—"))}</span></div>
           <div class="detail-box"><b>Comune</b><span>${escapeHtml(report.comune || "—")}</span></div>
-          <div class="detail-box"><b>Indirizzo</b><span>${escapeHtml(formatAddress(report))}</span></div>
+          <div class="detail-box"><b>Provincia</b><span>${escapeHtml(report.provincia || "—")}</span></div>
+          <div class="detail-box detail-box--wide"><b>Indirizzo</b><span>${escapeHtml(formatAddress(report))}</span></div>
           <div class="detail-box"><b>Autore</b><span>${escapeHtml(authorName(report))}</span></div>
           <div class="detail-box"><b>Data</b><span>${escapeHtml(formatDate(report.created_at))}</span></div>
-          <div class="detail-box"><b>Coordinate</b><span>${report.lat && report.lng ? `${report.lat}, ${report.lng}` : "Non impostate"}</span></div>
         </div>
-        <div class="report-actions">
+        <div class="drawer-actions">
           <button class="btn btn-primary like-btn ${state.likes.has(report.id) ? "is-liked" : ""}" data-id="${report.id}">${state.likes.has(report.id) ? "❤️ Ti piace" : "🤍 Vota"} <span class="btn-like-count">${Number(report.like_count || 0)}</span></button>
-          <button class="btn btn-soft" data-route="new">Nuova segnalazione</button>
+          <button class="btn btn-soft drawer-close-btn" type="button">Chiudi</button>
         </div>
+        ${report.user_id && report.user_id !== state.user?.id ? `
+        <div class="drawer-moderation">
+          <button class="btn btn-ghost btn-small drawer-report-btn" type="button">⚑ Segnala</button>
+          <button class="btn btn-ghost btn-small drawer-block-btn" type="button">⊘ Blocca utente</button>
+        </div>` : ""}
       </div>
     </article>
   `;
 
   document.body.appendChild(backdrop);
-  backdrop.querySelector(".drawer-close").addEventListener("click", () => backdrop.remove());
+  const close = () => backdrop.remove();
+  backdrop.querySelector(".drawer-close").addEventListener("click", close);
+  backdrop.querySelector(".drawer-close-btn")?.addEventListener("click", close);
   backdrop.addEventListener("click", (event) => {
-    if (event.target === backdrop) backdrop.remove();
+    if (event.target === backdrop) close();
   });
-  backdrop.querySelector(".like-btn")?.addEventListener("click", async () => {
-    await toggleLike(report.id);
-    backdrop.remove();
+  // Like dal dettaglio: aggiornamento ottimistico in-place, il drawer resta aperto
+  backdrop.querySelector(".like-btn")?.addEventListener("click", () => toggleLike(report.id));
+  // Moderazione
+  backdrop.querySelector(".drawer-report-btn")?.addEventListener("click", () => handleReportContent(report.id));
+  backdrop.querySelector(".drawer-block-btn")?.addEventListener("click", () => { close(); handleBlockUser(report.user_id); });
+}
+
+async function handleReportContent(reportId) {
+  if (!state.user) return setRoute("auth");
+  const ok = await confirmSheet({
+    title: "Segnalare questo contenuto?",
+    message: "Lo invierai ai moderatori per una verifica. Grazie per aiutarci a tenere CivicVois sicura.",
+    confirmLabel: "Segnala",
+    danger: true
   });
-  backdrop.querySelector("[data-route]")?.addEventListener("click", (e) => {
-    backdrop.remove();
-    setRoute(e.currentTarget.dataset.route);
+  if (!ok) return;
+  try {
+    await backend.reportContent(reportId);
+    toast("Contenuto segnalato. Lo esamineremo al più presto.", "success");
+  } catch (error) {
+    toast(error.message || "Segnalazione non riuscita.", "error");
+  }
+}
+
+async function handleBlockUser(targetUserId) {
+  if (!state.user || !targetUserId) return;
+  const ok = await confirmSheet({
+    title: "Bloccare questo utente?",
+    message: "Non vedrai più le sue segnalazioni. Potrai sbloccarlo in seguito contattando il supporto.",
+    confirmLabel: "Blocca",
+    danger: true
   });
+  if (!ok) return;
+  try {
+    await backend.blockUser(targetUserId);
+    state.blocked.add(targetUserId);
+    toast("Utente bloccato.", "success");
+    await refreshData();
+    render();
+  } catch (error) {
+    toast(error.message || "Operazione non riuscita.", "error");
+  }
 }
 
 // ─── Mappa ────────────────────────────────────────────────────────────────────
@@ -2805,7 +3598,6 @@ function reportCardHtml(report) {
             <div style="height:9px"></div>
             <h2 class="report-title">${escapeHtml(report.titolo || capitalize(report.tipo || "Segnalazione"))}</h2>
           </div>
-          <span class="chip like-count-chip" aria-label="Numero voti">❤️ <b>${Number(report.like_count || 0)}</b></span>
         </div>
         <p class="report-desc">${escapeHtml(report.descrizione || "")}</p>
         <div class="report-meta">
@@ -2838,9 +3630,14 @@ function activityHtml(report) {
 // ─── Filtri & stats ───────────────────────────────────────────────────────────
 
 function filteredReports() {
-  const q = state.filters.q.trim().toLowerCase();
+  const f = state.filters;
+  const q = (f.q || "").trim().toLowerCase();
   let list = [...state.reports];
 
+  // Nascondi i contenuti degli utenti bloccati
+  if (state.blocked?.size) list = list.filter(r => !state.blocked.has(r.user_id));
+
+  // Ricerca testuale (solo dalla barra globale dell'header desktop)
   if (q) {
     list = list.filter(r => [r.titolo, r.tipo, r.descrizione, r.comune, r.via, authorName(r)]
       .filter(Boolean)
@@ -2849,15 +3646,19 @@ function filteredReports() {
       .includes(q));
   }
 
-  if (state.filters.comune) list = list.filter(r => r.comune === state.filters.comune);
-  if (state.filters.tipo) list = list.filter(r => r.tipo === state.filters.tipo);
-  if (state.filters.stato) list = list.filter(r => r.stato === state.filters.stato);
+  // Filtri territoriali a cascata + categoria (confronto robusto ai nomi)
+  const eqLoc = (a, b) => normalizeLocationKey(a) === normalizeLocationKey(b);
+  if (f.regione)   list = list.filter(r => eqLoc(r.regione, f.regione));
+  if (f.provincia) list = list.filter(r => eqLoc(r.provincia, f.provincia));
+  if (f.comune)    list = list.filter(r => eqLoc(r.comune, f.comune));
+  if (f.tipo)      list = list.filter(r => r.tipo === f.tipo);
 
-  if (state.filters.sort === "like") list.sort((a, b) => Number(b.like_count || 0) - Number(a.like_count || 0));
-  else if (state.filters.sort === "urgenti") list.sort((a, b) => priorityValue(b.priorita) - priorityValue(a.priorita));
-  else list.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  // Ordinamento predefinito: più recenti
+  list.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
 
-  return list;
+  // Home privata: al massimo PAGE_SIZE (10) segnalazioni, così la mappa resta
+  // visibile e non si crea scroll infinito.
+  return list.slice(0, PAGE_SIZE);
 }
 
 function getStats() {
@@ -2876,10 +3677,10 @@ function navHtml(active) {
   const isAdmin = state.profile?.role === "admin";
   const items = [
     navItem("dashboard", "🏠", "Dashboard", active),
-    navItem("new", "+", "Nuova segnalazione", active, { plus: true }),
-    navItem("profile", profileNavIconHtml(), "Profilo", active, { htmlIcon: true })
+    navItem("new", "+", "Nuova segnalazione", active, { plus: true })
   ];
 
+  if (state.user) items.push(navItem("profile", profileNavIconHtml(), "Profilo", active, { htmlIcon: true }));
   if (isAdmin) items.push(navItem("admin", "🛠️", "Admin", active));
 
   return `
@@ -2967,6 +3768,21 @@ function emptyHtml(title, text) {
   return `<div class="empty-state"><strong>${escapeHtml(title)}</strong>${escapeHtml(text)}</div>`;
 }
 
+// Placeholder animati mostrati mentre il feed carica (no schermo vuoto)
+function skeletonFeedHtml(n = 4) {
+  const card = `
+    <div class="skeleton-card">
+      <div class="sk sk-media"></div>
+      <div class="sk-body">
+        <div class="sk sk-line sk-chip"></div>
+        <div class="sk sk-line sk-title"></div>
+        <div class="sk sk-line"></div>
+        <div class="sk sk-line sk-short"></div>
+      </div>
+    </div>`;
+  return Array(n).fill(card).join("");
+}
+
 // ─── Toast ────────────────────────────────────────────────────────────────────
 
 function installGlobalToastStack() {
@@ -2977,7 +3793,16 @@ function installGlobalToastStack() {
 }
 
 function toast(message, type = "") {
-  const stack = $(".toast-stack") || document.body.appendChild(Object.assign(document.createElement("div"), { className: "toast-stack" }));
+  let stack = $(".toast-stack");
+  if (!stack) {
+    stack = document.createElement("div");
+    stack.className = "toast-stack";
+    // Accessibilità: gli screen reader annunciano i messaggi
+    stack.setAttribute("role", "status");
+    stack.setAttribute("aria-live", "polite");
+    stack.setAttribute("aria-atomic", "true");
+    document.body.appendChild(stack);
+  }
   const duplicate = Array.from(stack.children).some(child => child.textContent === message);
   if (duplicate) return;
   const el = document.createElement("div");

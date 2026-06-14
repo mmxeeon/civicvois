@@ -1,12 +1,22 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v6-supabase";
+const CIVICVOIS_CACHE = "civicvois-pwa-v8-local-vendor";
 const APP_SHELL = [
   "/",
   "/index.html",
   "/manifest.webmanifest",
   "/assets/css/styles.css",
+  "/assets/data/comuni.json",
+  "/assets/vendor/leaflet/leaflet.css",
+  "/assets/vendor/leaflet/leaflet.js",
+  "/assets/vendor/leaflet/images/marker-icon.png",
+  "/assets/vendor/leaflet/images/marker-icon-2x.png",
+  "/assets/vendor/leaflet/images/marker-shadow.png",
+  "/assets/vendor/leaflet/images/layers.png",
+  "/assets/vendor/leaflet/images/layers-2x.png",
+  "/assets/vendor/supabase/supabase-js.js",
   "/assets/js/app.js",
   "/assets/js/config.js",
   "/assets/js/supabase-client.js",
+  "/assets/js/sw-register.js",
   "/assets/img/civicvois-logo.png",
   "/assets/icons/icon-192.png",
   "/assets/icons/icon-512.png",

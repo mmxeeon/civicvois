@@ -1,17 +1,6 @@
 // CivicVois — configurazione runtime
-// Punto unico per l'URL del backend. Vale sia per la PWA (browser) sia per
-// l'app nativa (Capacitor su iOS/Android): tutte le chiamate alle Netlify
-// Functions usano URL assoluti, così la WebView nativa (origin
-// capacitor://localhost o http://localhost) non costruisce mai URL sbagliati.
-
-export const API_BASE_URL = "https://civicvois.it/.netlify/functions";
-
-// Costruisce l'URL assoluto di una Netlify Function.
-// Esempio: apiUrl("civicvois-api") → https://civicvois.it/.netlify/functions/civicvois-api
-export function apiUrl(functionName) {
-  const name = String(functionName || "").replace(/^\/+/, "");
-  return `${API_BASE_URL}/${name}`;
-}
+// Il backend è Supabase (database reale + auth + storage). Non esistono più
+// Netlify Functions custom: il client parla direttamente con Supabase via HTTPS.
 
 // True quando l'app gira dentro un contenitore Capacitor.
 export const IS_NATIVE_APP = (() => {

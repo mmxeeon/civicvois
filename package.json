@@ -6,6 +6,7 @@
   "scripts": {
     "deploy": "netlify deploy --prod",
     "dev": "netlify dev",
+    "build:vendor": "node scripts/build-vendor.mjs",
     "build:web": "node scripts/build-web.mjs",
     "cap:sync": "npm run build:web && npx cap sync",
     "cap:ios": "npm run cap:sync && npx cap open ios",
@@ -21,10 +22,12 @@
     "@capacitor/keyboard": "^6.0.3",
     "@capacitor/splash-screen": "^6.0.3",
     "@capacitor/status-bar": "^6.0.2",
-    "@netlify/blobs": "^9.1.0"
+    "@supabase/supabase-js": "^2.108.1",
+    "leaflet": "^1.9.4"
   },
   "devDependencies": {
     "@capacitor/assets": "^3.0.5",
-    "@capacitor/cli": "^6.2.0"
+    "@capacitor/cli": "^6.2.0",
+    "esbuild": "^0.28.1"
   }
 }
