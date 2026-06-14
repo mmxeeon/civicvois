@@ -3,7 +3,7 @@
 // Mantiene la stessa struttura del sito statico ma esclude file/cartelle che
 // non devono finire dentro l'app (node_modules, ios/android, file SQL, documenti, ecc.).
 
-import { cpSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,9 +37,16 @@ function copyAll() {
 }
 
 function writeMarker() {
+  // Marker informativo del bundle (non viene consumato a runtime). Il backend è
+  // Supabase: niente più riferimenti alle vecchie Netlify Functions custom.
+  let version = "";
+  try {
+    version = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")).version || "";
+  } catch {}
   const marker = {
     builtAt: new Date().toISOString(),
-    apiBaseUrl: "https://civicvois.it/.netlify/functions"
+    version,
+    backend: "supabase"
   };
   writeFileSync(path.join(OUT, "build-info.json"), JSON.stringify(marker, null, 2));
 }

@@ -1,4 +1,5 @@
 {
-  "builtAt": "2026-06-14T21:04:03.132Z",
-  "apiBaseUrl": "https://civicvois.it/.netlify/functions"
+  "builtAt": "2026-06-14T23:07:28.678Z",
+  "version": "3.0.0",
+  "backend": "supabase"
 }
