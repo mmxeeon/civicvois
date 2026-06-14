@@ -1377,10 +1377,6 @@ function renderApp(active) {
 
         <!-- Header desktop: search + notifiche + CTA -->
         <header class="app-header">
-          <div class="app-header-search">
-            <svg class="app-header-search-ico" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-            <input class="app-header-search-input" id="global-search" type="search" placeholder="Cerca per titolo, comune, autore…" />
-          </div>
           <div class="app-header-actions">
             <button class="icon-btn app-notif-btn" aria-label="Notifiche">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
@@ -1432,7 +1428,6 @@ function dashboardHtml() {
         <p class="dash-subtitle">Controlla segnalazioni, priorità e aggiornamenti del territorio.</p>
       </div>
       <!-- CTA desktop visibile solo da desktop (nel mobile c'è quella separata) -->
-      <button class="btn btn-primary dash-cta-desktop" data-route="new">+ Nuova segnalazione</button>
     </div>
 
     ${DEMO_MODE ? demoNoticeHtml() : ""}
