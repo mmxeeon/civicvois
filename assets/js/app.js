@@ -806,7 +806,7 @@ function renderLanding() {
           <nav class="nav-desktop" aria-label="Navigazione principale">
             <a class="nav-link" href="#come-funziona">Come funziona</a>
             <a class="nav-link" href="#vantaggi">Vantaggi</a>
-            <a class="nav-link" href="#segnalazioni">Segnalazioni</a>
+            <a class="nav-link" href="#/dashboard">Segnalazioni</a>
           </nav>
           <div class="header-actions">
             ${state.user ? `<button class="btn btn-ghost" data-route="dashboard">Dashboard</button>` : `<button class="btn btn-ghost" data-route="auth">Accedi</button>`}
@@ -824,8 +824,8 @@ function renderLanding() {
               ${state.user
                 ? `<button class="btn btn-primary" data-route="new">Crea una segnalazione</button>
                    <button class="btn btn-ghost" data-route="dashboard">Entra nella dashboard</button>`
-                : `<button class="btn btn-primary" id="hero-login">Accedi</button>
-                   <button class="btn btn-ghost" id="hero-register">Registrati</button>`}
+                : `<button class="btn btn-primary" data-route="dashboard">Esplora le segnalazioni</button>
+                   <button class="btn btn-ghost" id="hero-login">Accedi o registrati</button>`}
             </div>
             <div class="hero-stats hero-stats--square" aria-label="Statistiche CivicVois">
               <div class="stat-card"><div class="stat-value">${stats.total}</div><div class="stat-label">segnalazioni</div></div>
@@ -3333,7 +3333,7 @@ function paintReportDetail(report) {
           </div>
           <div class="drawer-actions" style="margin-top:16px;">
             <button class="btn btn-primary rd-like ${liked ? "is-liked" : ""}" data-id="${report.id}">${liked ? "❤️ Ti piace" : "🤍 Vota"} <span class="btn-like-count">${Number(report.like_count || 0)}</span></button>
-            <button class="btn btn-soft" data-route="${state.user ? "dashboard" : "landing"}">${state.user ? "Vai alla dashboard" : "Torna alla home"}</button>
+            <button class="btn btn-soft" data-route="dashboard">${state.user ? "Vai alla dashboard" : "Vedi le segnalazioni"}</button>
           </div>
         </article>
       </main>
