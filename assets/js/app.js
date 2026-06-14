@@ -304,6 +304,23 @@ function createSupabaseAdapter() {
       return { user, session: data.session, profile };
     },
 
+    async fetchReportById(id) {
+      const { data, error } = await withRetry(() =>
+        supabase
+          .from("segnalazioni")
+          .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
+          .eq("id", id)
+          .maybeSingle()
+      );
+      if (error || !data) return null;
+      let profiles = null;
+      if (data.user_id) {
+        const { data: p } = await supabase.from("profiles").select("id,username,full_name,avatar_url,comune,provincia").eq("id", data.user_id).maybeSingle();
+        profiles = p || null;
+      }
+      return { ...data, profiles };
+    },
+
     async fetchReports({ page = 0 } = {}) {
       const from = page * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
@@ -639,6 +656,11 @@ function setRoute(route) {
 }
 
 function normalizeRoute(route) {
+  // Dettaglio segnalazione: route pubblica e condivisibile (#/report/<id>)
+  if (route.startsWith("report/")) {
+    state.reportId = route.slice("report/".length);
+    return "report";
+  }
   if (["dashboard", "new", "profile", "admin", "settings", "complete-profile"].includes(route) && !state.user) return "auth";
   if (route === "settings") return "profile";
   // Guard: con profilo incompleto, ogni pagina privata diventa "complete-profile"
@@ -746,7 +768,7 @@ function render() {
   // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
   // Google), qualunque pagina privata lo dirotta alla schermata di
   // completamento, finché non la compila. Niente home con profilo a metà.
-  if (state.user && isProfileIncomplete(state.profile) && state.route !== "complete-profile") {
+  if (state.user && isProfileIncomplete(state.profile) && state.route !== "complete-profile" && state.route !== "report") {
     state.route = "complete-profile";
     if (window.location.hash !== "#/complete-profile") history.replaceState(null, "", "#/complete-profile");
   }
@@ -756,6 +778,8 @@ function render() {
       return state.user ? setRoute("dashboard") : renderAuthPage();
     case "complete-profile":
       return renderCompleteProfile();
+    case "report":
+      return renderReportDetail();
     case "dashboard":
       return renderApp("dashboard");
     case "new":
@@ -2510,7 +2534,7 @@ function bindReportActions() {
   });
 
   $$(".open-detail").forEach(btn => {
-    btn.addEventListener("click", () => openReportDrawer(btn.dataset.id));
+    btn.addEventListener("click", () => setRoute("report/" + btn.dataset.id));
   });
 
   $$(".delete-own-report").forEach(btn => {
@@ -3242,6 +3266,99 @@ async function deleteReport(id) {
 }
 
 // ─── Drawer dettaglio ─────────────────────────────────────────────────────────
+
+// ─── Dettaglio segnalazione come PAGINA (link condivisibile, FASE 3) ──────────
+function renderReportDetail() {
+  const id = state.reportId;
+  const cached = state.reports.find(r => String(r.id) === String(id));
+  if (cached) return paintReportDetail(cached);
+  // Non in cache (es. link aperto direttamente): loading + fetch per id
+  app.innerHTML = `
+    <div class="page report-detail-page">
+      <header class="site-header"><div class="header-inner">${brandHtml()}<div class="header-actions"><button class="btn btn-ghost" data-route="${state.user ? "dashboard" : "landing"}">${state.user ? "Dashboard" : "Home"}</button></div></div></header>
+      <main style="max-width:760px;margin:0 auto;padding:24px 16px;"><div class="empty-state"><strong>Caricamento segnalazione…</strong></div></main>
+    </div>`;
+  bindRouteButtons();
+  Promise.resolve(backend.fetchReportById?.(id)).then(report => {
+    if (state.route !== "report" || String(state.reportId) !== String(id)) return; // route cambiata nel frattempo
+    if (report) {
+      state.reports = [report, ...state.reports.filter(r => String(r.id) !== String(report.id))];
+      paintReportDetail(report);
+    } else {
+      paintReportNotFound();
+    }
+  }).catch(() => paintReportNotFound());
+}
+
+function paintReportNotFound() {
+  app.innerHTML = `
+    <div class="page report-detail-page">
+      <header class="site-header"><div class="header-inner">${brandHtml()}<div class="header-actions"><button class="btn btn-primary" data-route="${state.user ? "dashboard" : "landing"}">${state.user ? "Dashboard" : "Home"}</button></div></div></header>
+      <main style="max-width:760px;margin:0 auto;padding:24px 16px;">${emptyHtml("Segnalazione non trovata", "Potrebbe essere stata rimossa, oppure il link non è valido.")}</main>
+    </div>`;
+  bindRouteButtons();
+}
+
+function paintReportDetail(report) {
+  const liked = state.likes.has(report.id);
+  app.innerHTML = `
+    <div class="page report-detail-page">
+      <header class="site-header">
+        <div class="header-inner">
+          ${brandHtml()}
+          <div class="header-actions">
+            <button class="btn btn-ghost" id="rd-back">← Indietro</button>
+            <button class="btn btn-soft" id="rd-share">Copia link</button>
+          </div>
+        </div>
+      </header>
+      <main style="max-width:760px;margin:0 auto;padding:18px 16px 60px;">
+        <article class="panel panel-pad">
+          <div class="drawer-hero" style="border-radius:var(--r-lg);overflow:hidden;margin-bottom:14px;">
+            ${report.photo_url ? `<img src="${escapeAttr(report.photo_url)}" alt="${escapeAttr(report.titolo || report.tipo)}" style="width:100%;display:block;" />` : `<div class="report-placeholder">${categoryIcon(report.tipo)}</div>`}
+          </div>
+          <div class="report-meta">${statusChip(report.stato)} ${priorityChip(report.priorita)}</div>
+          <h1 class="dash-title" style="font-size:1.6rem;margin:10px 0;">${escapeHtml(report.titolo || report.tipo)}</h1>
+          ${report.descrizione ? `<p class="report-desc">${escapeHtml(report.descrizione)}</p>` : ""}
+          <div style="height:12px"></div>
+          <div class="detail-grid">
+            <div class="detail-box"><b>Categoria</b><span>${escapeHtml(capitalize(report.tipo || "—"))}</span></div>
+            <div class="detail-box"><b>Priorità</b><span>${escapeHtml(capitalize(report.priorita || "—"))}</span></div>
+            <div class="detail-box"><b>Comune</b><span>${escapeHtml(report.comune || "—")}</span></div>
+            <div class="detail-box detail-box--wide"><b>Indirizzo</b><span>${escapeHtml(formatAddress(report))}</span></div>
+            <div class="detail-box"><b>Autore</b><span>${escapeHtml(authorName(report))}</span></div>
+            <div class="detail-box"><b>Data</b><span>${escapeHtml(formatDate(report.created_at))}</span></div>
+          </div>
+          <div class="drawer-actions" style="margin-top:16px;">
+            <button class="btn btn-primary rd-like ${liked ? "is-liked" : ""}" data-id="${report.id}">${liked ? "❤️ Ti piace" : "🤍 Vota"} <span class="btn-like-count">${Number(report.like_count || 0)}</span></button>
+            <button class="btn btn-soft" data-route="${state.user ? "dashboard" : "landing"}">${state.user ? "Vai alla dashboard" : "Torna alla home"}</button>
+          </div>
+        </article>
+      </main>
+    </div>
+  `;
+  bindRouteButtons();
+  $("#rd-back")?.addEventListener("click", () => { if (window.history.length > 1) window.history.back(); else setRoute(state.user ? "dashboard" : "landing"); });
+  $("#rd-share")?.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(window.location.href); toast("Link copiato negli appunti.", "success"); }
+    catch { toast("Copia automatica non riuscita: copia l'URL dalla barra del browser.", "warning"); }
+  });
+  $(".rd-like")?.addEventListener("click", async () => {
+    if (!state.user) return setRoute("auth");
+    const was = state.likes.has(report.id);
+    if (was) { state.likes.delete(report.id); report.like_count = Math.max(0, Number(report.like_count || 0) - 1); }
+    else { state.likes.add(report.id); report.like_count = Number(report.like_count || 0) + 1; }
+    paintReportDetail(report);
+    try {
+      await backend.toggleLike(state.user.id, report.id, was);
+    } catch (error) {
+      if (was) { state.likes.add(report.id); report.like_count = Number(report.like_count || 0) + 1; }
+      else { state.likes.delete(report.id); report.like_count = Math.max(0, Number(report.like_count || 0) - 1); }
+      paintReportDetail(report);
+      toast("Like non aggiornato.", "error");
+    }
+  });
+}
 
 // Schermata di conferma mostrata dopo l'invio di una segnalazione (FASE 3).
 // Riusa le classi del drawer per coerenza grafica; il recap usa i dati del payload.
