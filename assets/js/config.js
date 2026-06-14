@@ -30,6 +30,6 @@ export const FORCE_DEMO_MODE = false;
 export const GOOGLE_WEB_CLIENT_ID = "951133750252-icj1g21p1tude2ra1c5par5jkhm7t1l8.apps.googleusercontent.com";
 
 // Facebook App ID (vuoto finché non crei l'app su developers.facebook.com).
-// Quando l'avrai inserito qui + nei Netlify env vars + Info.plist, il login
-// Facebook su sito e app funzionerà.
+// Quando l'avrai inserito qui e nelle configurazioni native, il login Facebook
+// potrà essere abilitato su sito e app.
 export const FACEBOOK_APP_ID = "";

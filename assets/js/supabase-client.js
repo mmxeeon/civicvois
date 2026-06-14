@@ -1,5 +1,5 @@
 // CivicVois — client Supabase ufficiale.
-// Sostituisce supabase-proxy.js (che parlava col backend Netlify + Blobs).
+// Sostituisce il vecchio proxy dati custom.
 // Espone il client reale (auth, from, storage) PIÙ i metodi custom che l'app
 // usava sul proxy: deleteAccount() e moderation(), ora implementati su Supabase
 // (RPC + tabelle content_reports / user_blocks con RLS).

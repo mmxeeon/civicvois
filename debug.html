@@ -4,26 +4,43 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CivicVois Debug</title>
-  <style>body{font-family:system-ui;background:#0b1220;color:white;padding:32px}button{padding:12px 18px;border-radius:12px;border:0;margin-right:8px}pre{background:#111827;padding:18px;border-radius:14px;white-space:pre-wrap}</style>
+  <style>
+    body{font-family:system-ui;background:#0b1220;color:white;padding:32px}
+    button{padding:12px 18px;border-radius:12px;border:0;margin:0 8px 8px 0}
+    pre{background:#111827;padding:18px;border-radius:14px;white-space:pre-wrap}
+  </style>
 </head>
 <body>
   <h1>CivicVois Debug</h1>
-  <p>Questa pagina testa la Netlify Function e il backend Netlify Blobs.</p>
-  <button onclick="test('/.netlify/functions/civicvois-api?health=1')">Test health</button>
-  <button onclick="test('/.netlify/functions/civicvois-api?backend=1')">Test backend</button>
+  <p>Questa pagina testa la configurazione Supabase usata dall'app.</p>
+  <button id="config-btn">Test configurazione</button>
+  <button id="reports-btn">Test lettura segnalazioni</button>
   <pre id="out">Pronto.</pre>
-  <script>
-    async function test(url){
-      const out=document.getElementById('out');
-      out.textContent='Caricamento...';
-      try{
-        const r=await fetch(url,{cache:'no-store'});
-        const t=await r.text();
-        out.textContent='HTTP '+r.status+'\n\n'+t;
-      }catch(e){
-        out.textContent='Errore: '+e.message;
-      }
-    }
+  <script type="module">
+    import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./assets/js/config.js";
+    import { createClient } from "./assets/vendor/supabase/supabase-js.js";
+
+    const out = document.getElementById("out");
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const show = value => { out.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2); };
+
+    document.getElementById("config-btn").addEventListener("click", () => {
+      show({
+        ok: Boolean(SUPABASE_URL && SUPABASE_ANON_KEY),
+        url: SUPABASE_URL,
+        key_prefix: SUPABASE_ANON_KEY.slice(0, 18) + "..."
+      });
+    });
+
+    document.getElementById("reports-btn").addEventListener("click", async () => {
+      out.textContent = "Caricamento...";
+      const { data, error, status } = await supabase
+        .from("segnalazioni")
+        .select("id,titolo,created_at")
+        .order("created_at", { ascending: false })
+        .limit(1);
+      show({ ok: !error, status, error, data });
+    });
   </script>
 </body>
 </html>

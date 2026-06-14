@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Costruisce la cartella `www/` che Capacitor copierà nelle app native iOS/Android.
 // Mantiene la stessa struttura del sito statico ma esclude file/cartelle che
-// non devono finire dentro l'app (backend Netlify, node_modules, ios/android, ecc.).
+// non devono finire dentro l'app (node_modules, ios/android, file SQL, documenti, ecc.).
 
 import { cpSync, mkdirSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import path from "node:path";

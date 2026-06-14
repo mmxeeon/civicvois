@@ -1,15 +1,18 @@
 # CivicVois PWA
 
-Questa versione aggiunge la modalità PWA installabile senza modificare il backend Netlify Functions + Netlify Blobs.
+La PWA e installabile da browser e usa Supabase per dati, account e immagini.
+Il service worker gestisce solo asset statici e aggiorna la cache dopo i deploy.
 
 ## Test dopo il deploy
 
-1. Apri `/.netlify/functions/civicvois-api?health=1`.
-2. Apri `/.netlify/functions/civicvois-api?backend=1`.
-3. Apri il sito e fai un refresh forzato.
-4. Da iPhone: Safari → Condividi → Aggiungi alla schermata Home.
+1. Apri `https://civicvois.it`.
+2. Fai un refresh normale e uno forzato.
+3. Verifica che la schermata di caricamento non resti bloccata.
+4. Da iPhone: Safari -> Condividi -> Aggiungi alla schermata Home.
+5. Da Android: Chrome -> Installa app o Aggiungi a schermata Home.
 
 ## Note
 
-- Il service worker non mette in cache le chiamate a `/.netlify/functions/`, quindi login, segnalazioni, like e immagini continuano a usare dati online reali.
-- Dopo un deploy importante, se vedi ancora una versione vecchia, chiudi e riapri l’app installata oppure rimuovila e reinstallala dalla schermata Home.
+- Il service worker non deve intercettare in modo persistente chiamate dati verso Supabase.
+- Dopo un deploy importante, il client invia `SKIP_WAITING` al service worker e ricarica quando il nuovo worker prende controllo.
+- Se un dispositivo conserva ancora una cache vecchia, chiudi e riapri l'app installata o reinstallala dalla schermata Home.

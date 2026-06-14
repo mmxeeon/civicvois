@@ -1,20 +1,22 @@
-# CivicVois - Netlify Blobs + profili completi
+# CivicVois - versione Supabase
 
-Versione compatibile con Netlify Functions 2.0 e Netlify Blobs.
-
-Non usa Supabase, MySQL o PHP.
+Questa versione usa Supabase per autenticazione, database, storage immagini,
+moderazione e funzioni RPC. Netlify resta il sistema di hosting/deploy della PWA.
 
 ## Test rapidi dopo il deploy
 
-- `/.netlify/functions/civicvois-api?health=1` deve rispondere `ok: true`
-- `/.netlify/functions/civicvois-api?backend=1` deve rispondere `ok: true` e `backend: netlify-blobs`
+- Apri `https://civicvois.it` e verifica che la schermata di caricamento sparisca.
+- Fai refresh della pagina gia aperta e verifica che l'app riparta.
+- Accedi o registra un utente.
+- Crea una segnalazione con una foto, indirizzo verificato e categoria.
+- Verifica dashboard, dettaglio, like, profilo, esportazione dati ed eliminazione account.
 
 ## Migliorie incluse
 
 - Registrazione completa con territorio, bio e foto profilo.
-- Foto profilo salvata su Netlify Blobs.
+- Foto profilo e foto segnalazioni salvate su Supabase Storage.
 - Impostazioni profilo modificabili e persistenti.
-- Località vincolate Regione → Provincia → Comune.
+- Localita vincolate Regione -> Provincia -> Comune.
 - Segnalazioni con dati territoriali strutturati.
-- Admin con modifica stato/priorità e cancellazione.
-- Service worker aggiornato per evitare cache vecchia.
+- Admin con modifica stato/priorita, cancellazione e moderazione.
+- Service worker aggiornato per evitare cache vecchia dopo deploy.

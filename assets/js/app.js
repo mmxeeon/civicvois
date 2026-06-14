@@ -27,6 +27,9 @@ const CATEGORIES = [
 
 const STATUSES = ["nuova", "verificata", "in carico", "risolta", "archiviata"];
 const PRIORITIES = ["bassa", "media", "alta", "urgente"];
+const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp";
+const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
 
 // Lista comuni servita LOCALMENTE (assets/data/comuni.json): niente più fetch da
 // CDN a runtime (fix audit C-13) → funziona offline e senza esporre l'IP a terzi.
@@ -151,6 +154,28 @@ function hasProhibitedContent(...texts) {
     const t = normalizeForFilter(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(haystack);
   });
+}
+
+function storagePathFromPublicUrl(url, bucket) {
+  if (!url || !bucket) return "";
+  try {
+    const parsed = new URL(url);
+    const marker = `/storage/v1/object/public/${bucket}/`;
+    const index = parsed.pathname.indexOf(marker);
+    if (index === -1) return "";
+    return decodeURIComponent(parsed.pathname.slice(index + marker.length));
+  } catch {
+    return "";
+  }
+}
+
+function uniqueOwnStoragePaths(urls, bucket, userId) {
+  const prefix = `${userId}/`;
+  return [...new Set(
+    urls
+      .map(url => storagePathFromPublicUrl(url, bucket))
+      .filter(path => path && path.startsWith(prefix))
+  )];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -301,8 +326,35 @@ function createSupabaseAdapter() {
     },
 
     async deleteAccount() {
+      try {
+        await this.deleteOwnStorageFiles(state.user?.id);
+      } catch (error) {
+        console.warn("Pulizia storage prima della cancellazione account non completata.", error);
+      }
       await supabase.deleteAccount();   // cancella profilo + segnalazioni + like lato server
-      await supabase.auth.signOut();     // poi pulisce la sessione locale
+      await supabase.auth.signOut();    // poi pulisce la sessione locale
+    },
+
+    async deleteOwnStorageFiles(userId = state.user?.id) {
+      if (!userId) return;
+      const { data: reports, error: reportsError } = await supabase
+        .from("segnalazioni")
+        .select("photo_url")
+        .eq("user_id", userId);
+      if (reportsError) throw reportsError;
+
+      const profile = state.profile?.id === userId ? state.profile : await this._loadProfile(userId).catch(() => null);
+      const reportPaths = uniqueOwnStoragePaths((reports || []).map(r => r.photo_url), "report-photos", userId);
+      const avatarPaths = uniqueOwnStoragePaths([profile?.avatar_url], "avatars", userId);
+
+      if (reportPaths.length) {
+        const { error } = await supabase.storage.from("report-photos").remove(reportPaths);
+        if (error) throw error;
+      }
+      if (avatarPaths.length) {
+        const { error } = await supabase.storage.from("avatars").remove(avatarPaths);
+        if (error) throw error;
+      }
     },
 
     // ── Moderazione contenuti ──────────────────────────────────────────────
@@ -481,9 +533,8 @@ function createSupabaseAdapter() {
     },
 
     async uploadPhoto(file, bucket) {
-      const validTypes = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
-      if (!validTypes.includes(file.type)) throw new Error("Formato immagine non supportato.");
-      if (file.size > 5 * 1024 * 1024) throw new Error("Immagine troppo grande. Limite: 5 MB.");
+      if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) throw new Error("Formato immagine non supportato.");
+      if (file.size > MAX_IMAGE_SIZE_BYTES) throw new Error("Immagine troppo grande. Limite: 5 MB.");
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
       const path = `${state.user.id}/${crypto.randomUUID()}.${ext}`;
       const { error } = await supabase.storage.from(bucket).upload(path, file, { cacheControl: "3600", upsert: false });
@@ -1713,17 +1764,17 @@ function newReportHtml() {
             <span class="nr-section-num">6</span>
             <div>
               <h2 class="nr-section-title">Foto <span class="nr-required">(obbligatoria)</span></h2>
-              <p class="nr-section-sub">Carica una o più foto per descrivere meglio il problema.</p>
+              <p class="nr-section-sub">Carica una foto chiara per descrivere meglio il problema.</p>
             </div>
           </div>
           <div class="nr-photo-grid" id="photo-grid">
             <label class="nr-photo-upload" id="upload-box">
-              <input type="file" name="photo" accept="image/*" id="photo-input" multiple />
+              <input type="file" name="photo" accept="${IMAGE_ACCEPT}" id="photo-input" />
               <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
               <div id="upload-copy">
-                <strong>Trascina qui le foto</strong>
+                <strong>Trascina qui la foto</strong>
                 <span>oppure clicca per sfogliare</span>
-                <span class="nr-upload-hint">JPG, PNG fino a 10MB</span>
+                <span class="nr-upload-hint">JPG, PNG o WebP fino a 5 MB</span>
               </div>
             </label>
             <button class="nr-photo-action" type="button" id="camera-btn">
@@ -1738,7 +1789,7 @@ function newReportHtml() {
           <div id="photo-previews" class="nr-photo-previews"></div>
           <p class="nr-photo-limit">
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-            Puoi caricare fino a 5 foto
+            Puoi allegare una foto per segnalazione
           </p>
         </div>
 
@@ -2647,7 +2698,7 @@ function avatarUploadHtml(profile = {}, context = "profile") {
         ${src ? `<img src="${escapeAttr(src)}" alt="Foto profilo attuale" />` : avatarHtml(profile, "avatar-upload-fallback")}
       </div>
       <label class="upload-box upload-box--avatar">
-        <input type="file" name="avatar_file" accept="image/*" data-avatar-input />
+        <input type="file" name="avatar_file" accept="${IMAGE_ACCEPT}" data-avatar-input />
         <div data-avatar-copy><strong>${label}</strong><br><span style="color: var(--text-2); font-weight: 650;">JPG, PNG o WebP. Max 5 MB.</span></div>
       </label>
       <input type="hidden" name="avatar_url" value="${escapeAttr(src)}" />
@@ -2925,11 +2976,18 @@ function bindNewReportForm() {
   // ── Photo upload & previews ───────────────────────────────────────────
   const photoInput = $("#photo-input");
   const photoPreviews = $("#photo-previews");
-  const MAX_PHOTOS = 5;
   const photoFiles = [];
-  // L'input file viene svuotato dopo ogni scelta: espongo i file sul form così
-  // createReport può leggerli (C-04).
+  // L'input file viene svuotato dopo ogni scelta: espongo la foto scelta sul
+  // form così createReport può leggerla (C-04). Il backend salva una sola URL.
   if (form) form._cvPhotos = photoFiles;
+
+  function setSelectedPhoto(file) {
+    photoFiles.splice(0, photoFiles.length);
+    if (file instanceof File && file.type.startsWith("image/")) {
+      photoFiles.push(file);
+    }
+    refreshPhotoPreviews();
+  }
 
   function refreshPhotoPreviews() {
     if (!photoPreviews) return;
@@ -2940,8 +2998,8 @@ function bindNewReportForm() {
         const item = document.createElement("div");
         item.className = "nr-photo-preview-item";
         item.innerHTML = `
-          <img src="${e.target.result}" alt="Foto ${idx+1}" />
-          <button type="button" class="nr-photo-preview-remove" data-idx="${idx}" title="Rimuovi">&times;</button>
+          <img src="${e.target.result}" alt="Foto segnalazione" />
+          <button type="button" class="nr-photo-preview-remove" data-idx="${idx}" title="Rimuovi foto">&times;</button>
         `;
         item.querySelector(".nr-photo-preview-remove").addEventListener("click", () => {
           photoFiles.splice(idx, 1);
@@ -2962,30 +3020,24 @@ function bindNewReportForm() {
     e.preventDefault();
     uploadArea.style.borderColor = "";
     const files = Array.from(e.dataTransfer.files || []).filter(f => f.type.startsWith("image/"));
-    const remaining = MAX_PHOTOS - photoFiles.length;
-    photoFiles.push(...files.slice(0, remaining));
-    refreshPhotoPreviews();
+    setSelectedPhoto(files[0]);
   });
 
   photoInput?.addEventListener("change", () => {
     const files = Array.from(photoInput.files || []).filter(f => f.type.startsWith("image/"));
-    const remaining = MAX_PHOTOS - photoFiles.length;
-    photoFiles.push(...files.slice(0, remaining));
+    setSelectedPhoto(files[0]);
     photoInput.value = "";
-    refreshPhotoPreviews();
   });
 
   // Camera button
   $("#camera-btn")?.addEventListener("click", () => {
     const ci = document.createElement("input");
     ci.type = "file";
-    ci.accept = "image/*";
+    ci.accept = IMAGE_ACCEPT;
     ci.capture = "environment";
     ci.addEventListener("change", () => {
-      const files = Array.from(ci.files || []);
-      const remaining = MAX_PHOTOS - photoFiles.length;
-      photoFiles.push(...files.slice(0, remaining));
-      refreshPhotoPreviews();
+      const files = Array.from(ci.files || []).filter(f => f.type.startsWith("image/"));
+      setSelectedPhoto(files[0]);
     });
     ci.click();
   });
@@ -3133,7 +3185,7 @@ async function createReport(form) {
   if (!location.ok) return toast(location.message, "error");
 
   let coords = parseCoords(String(formData.get("coordinate") || ""));
-  // Le foto scelte sono nell'array esposto sul form (C-04): l'input file è già
+  // La foto scelta è nell'array esposto sul form (C-04): l'input file è già
   // stato svuotato, quindi formData.get("photo") sarebbe vuoto.
   const formEl = form instanceof FormData ? null : form;
   const selectedPhotos = formEl && Array.isArray(formEl._cvPhotos) ? formEl._cvPhotos : [];
@@ -3789,7 +3841,7 @@ function demoNoticeHtml() {
   return `
     <div class="notice" style="margin-bottom:16px;">
       <strong>Modalità demo locale attiva</strong>
-      L'interfaccia è collegata a Netlify Functions e Netlify Blobs. Online i dati vengono salvati in modo persistente su Netlify.
+      L'interfaccia usa dati dimostrativi salvati nel browser. Online CivicVois usa Supabase per account, segnalazioni, immagini e moderazione.
     </div>
   `;
 }

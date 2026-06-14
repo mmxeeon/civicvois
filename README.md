@@ -1,20 +1,38 @@
-# CivicVois - Netlify Blobs + profili completi
+# CivicVois
 
-Versione compatibile con Netlify Functions 2.0 e Netlify Blobs.
+CivicVois e una piattaforma civica web/PWA con wrapper nativo iOS e Android tramite Capacitor.
 
-Non usa Supabase, MySQL o PHP.
+## Stato architettura
 
-## Test rapidi dopo il deploy
+- Frontend statico: `index.html`, `assets/`, `service-worker.js`.
+- Hosting e deploy: Netlify.
+- Backend dati: Supabase per autenticazione, database, storage immagini, moderazione e RPC.
+- Bundle nativo: Capacitor usa la cartella generata `www/`.
 
-- `/.netlify/functions/civicvois-api?health=1` deve rispondere `ok: true`
-- `/.netlify/functions/civicvois-api?backend=1` deve rispondere `ok: true` e `backend: netlify-blobs`
+Non ci sono piu Netlify Functions custom per leggere o scrivere dati applicativi.
 
-## Migliorie incluse
+## Comandi principali
 
-- Registrazione completa con territorio, bio e foto profilo.
-- Foto profilo salvata su Netlify Blobs.
-- Impostazioni profilo modificabili e persistenti.
-- Località vincolate Regione → Provincia → Comune.
-- Segnalazioni con dati territoriali strutturati.
-- Admin con modifica stato/priorità e cancellazione.
-- Service worker aggiornato per evitare cache vecchia.
+```bash
+npm install
+npm run build:web
+npm run cap:sync
+```
+
+`npm run build:web` copia gli asset sorgenti in `www/`. Eseguilo dopo ogni modifica a `index.html`, `service-worker.js`, `manifest.webmanifest`, `assets/` o `legal/`.
+
+## Verifiche rapide
+
+- Apri `https://civicvois.it`.
+- Verifica che refresh e deep link restino sulla piattaforma.
+- Crea una segnalazione con categoria, indirizzo verificato, descrizione e una foto.
+- Controlla Profilo, esportazione dati, eliminazione account, moderazione e like.
+- Applica su Supabase gli script in `supabase/` nell'ordine indicato, incluso `supabase/03_hardening.sql` prima della pubblicazione.
+
+## Documenti utili
+
+- `README_APP_STORE_PLAY_STORE.md`: checklist store e build native.
+- `supabase/01_setup.sql`: schema base.
+- `supabase/02_moderation_delete.sql`: moderazione, blocchi ed eliminazione account.
+- `supabase/03_hardening.sql`: vincoli server, protezioni insert e policy storage.
+- `legal/`: privacy, termini, contenuti, supporto ed eliminazione account.

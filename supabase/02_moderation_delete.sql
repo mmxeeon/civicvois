@@ -49,11 +49,22 @@ create policy "blocks_delete" on public.user_blocks for delete using (blocker_id
 -- ── 3. Eliminazione account (l'utente cancella sé stesso) ────────────────────
 -- SECURITY DEFINER: gira coi privilegi del proprietario, così può eliminare la
 -- riga in auth.users; il CASCADE rimuove profilo, segnalazioni, like, blocchi e
--- report collegati. Richiesta da Apple/Google per app con creazione account.
+-- report collegati. Prima rimuove anche i record Storage nelle cartelle utente.
+-- Richiesta da Apple/Google per app con creazione account.
 create or replace function public.delete_my_account() returns void
-language plpgsql security definer set search_path = public, auth as $$
+language plpgsql security definer set search_path = public, auth, storage as $$
+declare
+  current_user_id uuid := auth.uid();
 begin
-  delete from auth.users where id = auth.uid();
+  if current_user_id is null then
+    raise exception 'Utente non autenticato';
+  end if;
+
+  delete from storage.objects
+  where bucket_id in ('report-photos', 'avatars')
+    and (storage.foldername(name))[1] = current_user_id::text;
+
+  delete from auth.users where id = current_user_id;
 end $$;
 revoke all on function public.delete_my_account() from public;
 grant execute on function public.delete_my_account() to authenticated;
