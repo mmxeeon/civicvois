@@ -1327,7 +1327,14 @@ async function handleGoogleSignInNative() {
   if (!supabase) throw new Error("Backend non disponibile.");
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo: NATIVE_OAUTH_REDIRECT, skipBrowserRedirect: true }
+    options: {
+      redirectTo: NATIVE_OAUTH_REDIRECT,
+      skipBrowserRedirect: true,
+      queryParams: {
+        prompt: "select_account",
+        access_type: "offline"
+      }
+    }
   });
   if (error) throw new Error(error.message || "Avvio login Google non riuscito.");
   if (!data?.url) throw new Error("URL di autenticazione Google non disponibile.");
@@ -1345,6 +1352,7 @@ async function handleGoogleSignInNative() {
 function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
   return new Promise((resolve, reject) => {
     const AppPlugin = window.Capacitor?.Plugins?.App;
+    const BrowserPlugin = window.Capacitor?.Plugins?.Browser;
     if (!AppPlugin?.addListener) {
       reject(new Error("Plugin Capacitor App non disponibile per il login nativo."));
       return;
@@ -1352,7 +1360,17 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
     let settled = false;
     let handle = null;
     const timer = setTimeout(() => finish(new Error("Tempo scaduto per il login Google.")), 180000);
-    function cleanup() { clearTimeout(timer); try { handle?.remove?.(); } catch (_) {} }
+    function closeBrowser() {
+      try {
+        const result = BrowserPlugin?.close?.();
+        Promise.resolve(result).catch(() => {});
+      } catch (_) {}
+    }
+    function cleanup() {
+      clearTimeout(timer);
+      try { handle?.remove?.(); } catch (_) {}
+      closeBrowser();
+    }
     function finish(err, code) {
       if (settled) return;
       settled = true;
@@ -1385,6 +1403,9 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
     Promise.resolve(listenerHandle).then((h) => {
       handle = h;
       // Apriamo il browser solo dopo che il listener è pronto.
+      if (BrowserPlugin?.open) {
+        return BrowserPlugin.open({ url: authUrl, presentationStyle: "fullscreen" });
+      }
       try { window.open(authUrl, "_system"); }
       catch (_) { window.location.href = authUrl; }
     }).catch((e) => finish(e instanceof Error ? e : new Error("Listener deep link non registrato.")));

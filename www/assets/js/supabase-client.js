@@ -12,7 +12,12 @@ import { createClient } from "../vendor/supabase/supabase-js.js";
 
 export function createSupabaseClient({ url, key }) {
   const client = createClient(url, key, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: "pkce"
+    }
   });
 
   // Eliminazione account: RPC SECURITY DEFINER che cancella auth.users (CASCADE
