@@ -2,9 +2,8 @@ import UIKit
 import Capacitor
 
 // Subclass del view controller principale di Capacitor.
-// Forza background scuro (#0b1020) su view, WebView e scrollView per evitare
-// le aree bianche native attorno e dentro la WebView (status bar overlay,
-// home indicator e overscroll).
+// Tiene la WebView full-bleed: safe area e spazi della bottom nav sono gestiti
+// dal CSS, evitando doppi inset nativi su iPhone.
 class BridgeViewController: CAPBridgeViewController {
 
     override func viewDidLoad() {
@@ -24,7 +23,14 @@ class BridgeViewController: CAPBridgeViewController {
             webView.backgroundColor = brandDark
             webView.isOpaque = false
             webView.scrollView.backgroundColor = brandDark
+            webView.scrollView.contentInsetAdjustmentBehavior = .never
+            webView.scrollView.contentInset = .zero
+            webView.scrollView.scrollIndicatorInsets = .zero
             webView.scrollView.bounces = true
+
+            if #available(iOS 15.0, *) {
+                webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
+            }
         }
     }
 
