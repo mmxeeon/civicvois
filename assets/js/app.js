@@ -680,6 +680,16 @@ init();
 
 // ─── Init & routing ───────────────────────────────────────────────────────────
 
+// Safety net: limita un'attesa async a `ms` millisecondi. Se scade, rifiuta —
+// così nessuna singola chiamata di rete può bloccare il boot all'infinito.
+function withTimeout(promise, ms, label = "operazione") {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Timeout ${label} (${ms}ms)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 async function init() {
   installGlobalToastStack();
   bindHashRouter();
@@ -691,14 +701,40 @@ async function init() {
   }).catch(error => console.warn("Anagrafica territoriale non aggiornata", error));
 
   backend.onAuthChange(async (_event, session) => {
-    state.session = session;
-    state.user = session?.user || null;
-    if (state.user) state.profile = await backend.fetchProfile(state.user.id).catch(() => null);
-    else state.profile = null;
-    await refreshData();
-    render();
+    try {
+      state.session = session;
+      state.user = session?.user || null;
+      // Timeout anche qui: se il fetch del profilo si blocca, non deve impedire
+      // il render del resto dell'app.
+      if (state.user) {
+        state.profile = await withTimeout(backend.fetchProfile(state.user.id), 7000, "profilo").catch(() => null);
+      } else {
+        state.profile = null;
+      }
+      await refreshData();
+      render();
+    } catch (error) {
+      console.error("Aggiornamento stato sessione non riuscito", error);
+      render();
+    }
   });
 
+  // Avvio resiliente: il primo render NON deve mai dipendere dal completamento
+  // di una chiamata di rete. Se il ripristino sessione o il caricamento dati è
+  // lento o bloccato, entro un timeout di sicurezza mostriamo comunque l'app
+  // (scheletri) e ridisegniamo appena i dati arrivano. Evita lo splash infinito
+  // (anche per il reviewer su rete lenta/instabile).
+  const boot = bootstrapAndLoad();
+  try {
+    await withTimeout(boot, 9000, "avvio");
+  } catch (error) {
+    console.warn("Avvio oltre il timeout o con errore: mostro comunque l'app.", error);
+    boot.then(render).catch(() => {});
+  }
+  render();
+}
+
+async function bootstrapAndLoad() {
   await bootstrapAuth();
 
   // App nativa (o web): se l'utente è già loggato e la route iniziale è
@@ -713,7 +749,6 @@ async function init() {
   }
 
   await refreshData();
-  render();
 }
 
 function bindHashRouter() {
@@ -783,7 +818,16 @@ function normalizeRoute(route) {
 }
 
 async function bootstrapAuth() {
-  const session = await backend.restoreSession();
+  let session = null;
+  try {
+    // Timeout: se getSession/profilo non risponde (rete lenta o bloccata), non
+    // restiamo appesi — l'onAuthChange (INITIAL_SESSION) aggiornerà comunque lo
+    // stato appena disponibile.
+    session = await withTimeout(backend.restoreSession(), 7000, "ripristino sessione");
+  } catch (error) {
+    console.warn("Ripristino sessione non riuscito (timeout o errore).", error);
+    return;
+  }
   if (!session) return;
   state.user = session.user;
   state.session = session.session || null;
