@@ -18,6 +18,15 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Deep link OAuth: redirect di ritorno dal browser di sistema dopo il
+                 login Google via Supabase (it.civicvois.app://login-callback). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="it.civicvois.app" />
+            </intent-filter>
         </activity>
 
         <provider

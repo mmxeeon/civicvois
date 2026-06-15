@@ -325,6 +325,19 @@ function createSupabaseAdapter() {
       return { user: data.user, session: data.session, profile };
     },
 
+    async oauthFinalize(profileHint = {}) {
+      // Path nativo (Supabase OAuth + deep link): la sessione è già stata creata
+      // da exchangeCodeForSession. Recuperiamo l'utente corrente e garantiamo il
+      // profilo (gli account social nascono senza comune/provincia).
+      const { data, error } = await supabase.auth.getSession();
+      if (error) throw new Error(niceBackendError(error, "Sessione Google non recuperata."));
+      const session = data?.session || null;
+      const user = session?.user;
+      if (!user) throw new Error("Sessione Google non disponibile dopo il login.");
+      const profile = await this._ensureProfile(user, profileHint || {});
+      return { user, session, profile };
+    },
+
     async startOAuth({ provider, redirectTo }) {
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
@@ -1301,21 +1314,73 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-// ── Google: app nativa Capacitor ─────────────────────────────────────────
+// ── Google: app nativa Capacitor (Supabase OAuth + deep link) ─────────────
+// Niente plugin GoogleAuth nativo: riusiamo il login Google già configurato su
+// Supabase (lo stesso client Web che funziona sul sito). Apriamo la pagina di
+// consenso nel browser di sistema e intercettiamo il redirect sullo scheme
+// it.civicvois.app:// tramite il plugin @capacitor/app, poi scambiamo il code
+// per una sessione (flusso PKCE). NB: il vecchio fallback rimandava a
+// capacitor://localhost/, che il browser di sistema non sa restituire all'app.
+const NATIVE_OAUTH_REDIRECT = "it.civicvois.app://login-callback";
+
 async function handleGoogleSignInNative() {
-  const GoogleAuth = window.Capacitor?.Plugins?.GoogleAuth;
-  if (!GoogleAuth) {
-    await startSupabaseOAuthRedirect("google");
-    return;
-  }
-  try { await GoogleAuth.initialize?.({ scopes: ["profile", "email"] }); } catch (_) {}
-  const result = await GoogleAuth.signIn();
-  const idToken = result?.authentication?.idToken;
-  if (!idToken) throw new Error("Token Google mancante.");
-  await finalizeSocialSession("google", idToken, {
-    email: result.email,
-    full_name: result.name,
-    avatar_url: result.imageUrl
+  if (!supabase) throw new Error("Backend non disponibile.");
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo: NATIVE_OAUTH_REDIRECT, skipBrowserRedirect: true }
+  });
+  if (error) throw new Error(error.message || "Avvio login Google non riuscito.");
+  if (!data?.url) throw new Error("URL di autenticazione Google non disponibile.");
+
+  const code = await openSystemBrowserAndAwaitCode(data.url, NATIVE_OAUTH_REDIRECT);
+  const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+  if (exchangeError) throw new Error(exchangeError.message || "Scambio del codice Google non riuscito.");
+
+  const { user, session, profile } = await backend.oauthFinalize();
+  await applyAuthedSession({ user, session, profile }, "google");
+}
+
+// Apre l'URL OAuth nel browser di sistema e risolve con il `code` presente nel
+// redirect di ritorno (catturato via @capacitor/app appUrlOpen).
+function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
+  return new Promise((resolve, reject) => {
+    const AppPlugin = window.Capacitor?.Plugins?.App;
+    if (!AppPlugin?.addListener) {
+      reject(new Error("Plugin Capacitor App non disponibile per il login nativo."));
+      return;
+    }
+    let settled = false;
+    let handle = null;
+    const timer = setTimeout(() => finish(new Error("Tempo scaduto per il login Google.")), 180000);
+    function cleanup() { clearTimeout(timer); try { handle?.remove?.(); } catch (_) {} }
+    function finish(err, code) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (err) reject(err); else resolve(code);
+    }
+
+    AppPlugin.addListener("appUrlOpen", (event) => {
+      const incoming = event?.url || "";
+      if (settled || !incoming.startsWith(redirectScheme)) return;
+      const qIndex = incoming.indexOf("?");
+      const hIndex = incoming.indexOf("#");
+      const query = qIndex >= 0 ? incoming.slice(qIndex + 1).split("#")[0] : "";
+      const frag = hIndex >= 0 ? incoming.slice(hIndex + 1) : "";
+      const params = new URLSearchParams(query);
+      const hashParams = new URLSearchParams(frag);
+      const errDesc = params.get("error_description") || params.get("error")
+        || hashParams.get("error_description") || hashParams.get("error");
+      if (errDesc) { finish(new Error(decodeURIComponent(errDesc))); return; }
+      const code = params.get("code") || hashParams.get("code");
+      if (!code) { finish(new Error("Codice di autorizzazione Google mancante nel redirect.")); return; }
+      finish(null, code);
+    }).then((h) => {
+      handle = h;
+      // Apriamo il browser solo dopo che il listener è pronto.
+      try { window.open(authUrl, "_system"); }
+      catch (_) { window.location.href = authUrl; }
+    }).catch((e) => finish(e instanceof Error ? e : new Error("Listener deep link non registrato.")));
   });
 }
 
@@ -1465,6 +1530,12 @@ function loadScriptOnce(src) {
 
 async function finalizeSocialSession(provider, token, profileHint = {}) {
   const { user, session, profile } = await backend.socialLogin({ provider, token, profileHint });
+  await applyAuthedSession({ user, session, profile }, provider);
+}
+
+// Applica una sessione social già ottenuta (idToken sul web, OAuth sul nativo)
+// allo stato dell'app e instrada l'utente.
+async function applyAuthedSession({ user, session, profile }, provider) {
   state.user = user;
   state.session = session || null;
   state.profile = profile;
