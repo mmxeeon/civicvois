@@ -416,7 +416,13 @@ function createSupabaseAdapter() {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data?.session) return null;
       const user = data.session.user;
-      const profile = await this.fetchProfile(user.id, user);
+      // Il profilo NON deve far fallire il ripristino sessione. A freddo (app
+      // nativa riaperta dopo essere stata chiusa: token scaduto in rinnovo, rete
+      // WebView non ancora pronta) il fetch può fallire/andare in 401: in quel
+      // caso restituiamo comunque la sessione con profile=null. Il profilo verrà
+      // ricaricato da onAuthChange (TOKEN_REFRESHED) e il guard non dirotta su
+      // "Completa profilo" quando il profilo è solo "non ancora caricato".
+      const profile = await this.fetchProfile(user.id, user).catch(() => null);
       return { user, session: data.session, profile };
     },
 
