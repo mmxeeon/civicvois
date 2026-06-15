@@ -66,5 +66,16 @@
 	<string>CivicVois può salvare nella libreria foto le immagini scattate per le segnalazioni.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>it.civicvois.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>it.civicvois.app</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
