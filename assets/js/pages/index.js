@@ -5,6 +5,7 @@ import { dashboardPage } from "./dashboard.js";
 import { detailPage } from "./detail.js";
 import { homePage } from "./home.js";
 import { newReportPage } from "./new-report.js";
+import { profileEditPage } from "./profile-edit.js";
 import { profilePage } from "./profile.js";
 import { settingsPage } from "./settings.js";
 
@@ -16,6 +17,7 @@ export const pageRoutes = {
   dashboard: dashboardPage,
   new: newReportPage,
   profile: profilePage,
+  "profile/edit": profileEditPage,
   settings: settingsPage,
   admin: adminPage
 };

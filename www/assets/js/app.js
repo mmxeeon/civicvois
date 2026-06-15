@@ -210,6 +210,10 @@ function createDemoAdapter() {
       return { user, profile };
     },
 
+    async startOAuth() {
+      throw new Error("Accesso Google non disponibile in modalità demo.");
+    },
+
     async logout() {
       localStorage.removeItem("cv_demo_user");
     },
@@ -321,6 +325,21 @@ function createSupabaseAdapter() {
       return { user: data.user, session: data.session, profile };
     },
 
+    async startOAuth({ provider, redirectTo }) {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo,
+          queryParams: provider === "google" ? {
+            prompt: "select_account",
+            access_type: "offline"
+          } : undefined
+        }
+      });
+      if (error) throw new Error(niceBackendError(error, "Accesso social non riuscito."));
+      return { redirecting: true };
+    },
+
     async logout() {
       await supabase.auth.signOut();
     },
@@ -380,7 +399,7 @@ function createSupabaseAdapter() {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data?.session) return null;
       const user = data.session.user;
-      const profile = await this._loadProfile(user.id);
+      const profile = await this.fetchProfile(user.id, user);
       return { user, session: data.session, profile };
     },
 
@@ -458,8 +477,11 @@ function createSupabaseAdapter() {
       return data || [];
     },
 
-    async fetchProfile(userId) {
-      return this._loadProfile(userId);
+    async fetchProfile(userId, user = state.user) {
+      const existing = await this._loadProfile(userId);
+      if (existing) return existing;
+      if (user?.id === userId) return this._ensureProfile(user);
+      return null;
     },
 
     async saveProfile(userId, payload) {
@@ -697,7 +719,7 @@ async function init() {
   loadItalyLocations().then((loaded) => {
     if (!loaded) return;
     if (state.route === "auth" && state.authMode === "register") return renderAuthPage("register");
-    if (["new", "profile"].includes(state.route)) render();
+    if (["new", "profile", "profile/edit"].includes(state.route)) render();
   }).catch(error => console.warn("Anagrafica territoriale non aggiornata", error));
 
   backend.onAuthChange(async (_event, session) => {
@@ -767,7 +789,18 @@ function bindHashRouter() {
 }
 
 function readRouteFromHash() {
-  return window.location.hash.replace(/^#\/?/, "") || "landing";
+  const raw = window.location.hash.replace(/^#\/?/, "") || "";
+  if (isOAuthCallbackHash(raw)) return "auth";
+  return raw || "landing";
+}
+
+function isOAuthCallbackHash(value) {
+  const hash = String(value || "");
+  return hash.includes("access_token=")
+    || hash.includes("refresh_token=")
+    || hash.includes("provider_token=")
+    || hash.includes("error_description=")
+    || hash.includes("type=recovery");
 }
 
 function setRoute(route) {
@@ -805,8 +838,8 @@ function normalizeRoute(route) {
     state.reportId = route.slice("report/".length);
     return "report";
   }
-  if (["new", "profile", "admin", "settings", "complete-profile"].includes(route) && !state.user) return "auth";
-  if (route === "settings") return "profile";
+  if (["new", "profile", "profile/edit", "admin", "settings", "complete-profile"].includes(route) && !state.user) return "auth";
+  if (route === "settings") return "profile/edit";
   // Guard: con profilo incompleto, ogni pagina privata diventa "complete-profile"
   if (state.user && isProfileIncomplete(state.profile) && route !== "complete-profile") {
     return "complete-profile";
@@ -917,7 +950,7 @@ function render() {
   if (!state.user && ["auth", "complete-profile"].includes(state.route)) {
     return state.route === "auth" ? renderPageRoute("auth") : renderPageRoute("landing");
   }
-  if (!state.user && ["new", "profile", "admin"].includes(state.route)) return renderPageRoute("auth");
+  if (!state.user && ["new", "profile", "profile/edit", "admin"].includes(state.route)) return renderPageRoute("auth");
 
   // ── GUARD CENTRALE: profilo incompleto ──────────────────────────────────
   // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
@@ -1271,7 +1304,10 @@ document.addEventListener("click", async (event) => {
 // ── Google: app nativa Capacitor ─────────────────────────────────────────
 async function handleGoogleSignInNative() {
   const GoogleAuth = window.Capacitor?.Plugins?.GoogleAuth;
-  if (!GoogleAuth) throw new Error("Plugin Google non disponibile.");
+  if (!GoogleAuth) {
+    await startSupabaseOAuthRedirect("google");
+    return;
+  }
   try { await GoogleAuth.initialize?.({ scopes: ["profile", "email"] }); } catch (_) {}
   const result = await GoogleAuth.signIn();
   const idToken = result?.authentication?.idToken;
@@ -1285,30 +1321,45 @@ async function handleGoogleSignInNative() {
 
 // ── Google: sito web (Google Identity Services) ──────────────────────────
 async function handleGoogleSignInWeb() {
-  if (!GOOGLE_WEB_CLIENT_ID) throw new Error("Google Client ID Web non configurato.");
-  await loadScriptOnce("https://accounts.google.com/gsi/client");
-  const idToken = await new Promise((resolve, reject) => {
-    let resolved = false;
-    window.google.accounts.id.initialize({
-      client_id: GOOGLE_WEB_CLIENT_ID,
-      callback: (response) => {
-        resolved = true;
-        if (response?.credential) resolve(response.credential);
-        else reject(new Error("Credenziale Google non ricevuta."));
-      },
-      auto_select: false,
-      cancel_on_tap_outside: true
+  try {
+    if (!GOOGLE_WEB_CLIENT_ID) throw new Error("Google Client ID Web non configurato.");
+    await loadScriptOnce("https://accounts.google.com/gsi/client");
+    const idToken = await new Promise((resolve, reject) => {
+      let settled = false;
+      let timer;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn(value);
+      };
+      const fallback = () => googleOAuthPopupFallback().then(
+        token => finish(resolve, token),
+        error => finish(reject, error)
+      );
+      timer = setTimeout(fallback, 3500);
+
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_WEB_CLIENT_ID,
+        callback: (response) => {
+          if (response?.credential) finish(resolve, response.credential);
+          else finish(reject, new Error("Credenziale Google non ricevuta."));
+        },
+        auto_select: false,
+        cancel_on_tap_outside: true
+      });
+      window.google.accounts.id.prompt((notification) => {
+        if (settled) return;
+        if (notification.isNotDisplayed?.() || notification.isSkippedMoment?.() || notification.isDismissedMoment?.()) {
+          fallback();
+        }
+      });
     });
-    window.google.accounts.id.prompt((notification) => {
-      // Se il popup One Tap non viene mostrato (cookie / FedCM bloccato), uso
-      // il fallback con popup OAuth esplicito.
-      if (resolved) return;
-      if (notification.isNotDisplayed?.() || notification.isSkippedMoment?.() || notification.isDismissedMoment?.()) {
-        googleOAuthPopupFallback().then(resolve, reject);
-      }
-    });
-  });
-  await finalizeSocialSession("google", idToken);
+    await finalizeSocialSession("google", idToken);
+  } catch (error) {
+    console.warn("Google Identity non completato, uso fallback Supabase OAuth.", error);
+    await startSupabaseOAuthRedirect("google");
+  }
 }
 
 // Fallback: popup OAuth implicit flow per ottenere id_token
@@ -1352,6 +1403,20 @@ function googleOAuthPopupFallback() {
       }
     }, 400);
   });
+}
+
+async function startSupabaseOAuthRedirect(provider) {
+  if (typeof backend.startOAuth !== "function") throw new Error("OAuth non supportato dal backend corrente.");
+  writeLocal("cv_oauth_return_route", state.route || "dashboard");
+  await backend.startOAuth({
+    provider,
+    redirectTo: getOAuthRedirectTo()
+  });
+}
+
+function getOAuthRedirectTo() {
+  const origin = window.location.origin || "https://civicvois.it";
+  return `${origin.replace(/\/$/, "")}/`;
 }
 
 // ── Facebook: app nativa Capacitor ───────────────────────────────────────
@@ -1505,6 +1570,7 @@ async function handleLogout() {
 // ─── App layout ───────────────────────────────────────────────────────────────
 
 function renderApp(active) {
+  const navActive = active === "profile-edit" ? "profile" : active;
   app.innerHTML = `
     <div class="app-layout">
 
@@ -1512,7 +1578,7 @@ function renderApp(active) {
       <aside class="sidebar">
         <div class="sidebar-inner">
           ${brandHtml()}
-          ${navHtml(active)}
+          ${navHtml(navActive)}
         </div>
         <div class="side-bottom">
           ${state.user
@@ -1545,11 +1611,12 @@ function renderApp(active) {
           ${active === "dashboard" ? dashboardHtml() : ""}
           ${active === "new" ? newReportHtml() : ""}
           ${active === "profile" ? profileHtml() : ""}
+          ${active === "profile-edit" ? profileEditHtml() : ""}
           ${active === "admin" ? adminHtml() : ""}
         </main>
 
         <!-- Mobile bottom nav -->
-        ${mobileNavHtml(active)}
+        ${mobileNavHtml(navActive)}
       </div>
     </div>
   `;
@@ -2073,7 +2140,7 @@ function profileHtml() {
               <span>${badges.length} ottenuti</span>
             </div>
           </button>
-          <button class="profile-section-card" data-tab="impostazioni">
+          <button class="profile-section-card profile-section-card--link" data-route="profile/edit">
             <div class="profile-section-icon" style="background:rgba(139,92,246,0.15); color:#c4b5fd;">
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
             </div>
@@ -2121,58 +2188,6 @@ function profileHtml() {
           ` : emptyHtml("Nessun badge ancora", "Partecipa attivamente per sbloccare i tuoi primi badge.")}
         </div>
 
-        <!-- Tab: Impostazioni rapide -->
-        <div class="profile-tab-panel" data-panel="impostazioni" style="display:none;">
-          <form id="profile-form" class="form-grid">
-            <div class="field">
-              <label>Nome completo</label>
-              <input class="input" name="full_name" value="${escapeAttr(p.full_name || "")}" />
-            </div>
-            <div class="field">
-              <label>Username</label>
-              <input class="input" name="username" value="${escapeAttr(p.username || "")}" />
-            </div>
-            <div class="field span-2">
-              <label>Bio</label>
-              <textarea class="textarea" name="bio" placeholder="Racconta brevemente chi sei.">${escapeHtml(p.bio || "")}</textarea>
-            </div>
-            ${locationFieldsHtml(p, { required: false })}
-            <div class="field span-2">
-              <label>Foto profilo</label>
-              ${avatarUploadHtml(p, "profile")}
-            </div>
-            <div class="span-2 profile-form-actions">
-              <button class="btn btn-soft" type="reset">Annulla</button>
-              <button class="btn btn-primary" type="submit">Salva profilo</button>
-            </div>
-          </form>
-
-          <!-- Esporta dati (GDPR) -->
-          <div class="danger-zone" style="border-top-color:var(--glass-border);">
-            <div>
-              <strong style="color:var(--text);">Esporta i miei dati</strong>
-              <span>Scarica una copia dei tuoi dati personali (profilo, segnalazioni, like) in formato JSON.</span>
-            </div>
-            <button class="btn btn-soft export-data-btn" type="button">Esporta dati</button>
-          </div>
-
-          <!-- Link legali -->
-          <div class="profile-legal-links">
-            <a href="https://civicvois.it/legal/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
-            <a href="https://civicvois.it/legal/termini.html" target="_blank" rel="noopener">Termini</a>
-            <a href="https://civicvois.it/legal/contenuti.html" target="_blank" rel="noopener">Regole contenuti</a>
-            <a href="https://civicvois.it/legal/supporto.html" target="_blank" rel="noopener">Supporto</a>
-          </div>
-
-          <!-- Zona pericolo: eliminazione account -->
-          <div class="danger-zone">
-            <div>
-              <strong>Elimina account</strong>
-              <span>Rimuove definitivamente il tuo profilo, le tue segnalazioni e i tuoi like. Non è reversibile.</span>
-            </div>
-            <button class="btn btn-danger delete-account-btn" type="button">Elimina account</button>
-          </div>
-        </div>
       </div>
 
       <!-- Sidebar destra (solo desktop) -->
@@ -2211,7 +2226,7 @@ function profileHtml() {
             `).join("")}
           </div>
           <div style="height:12px"></div>
-          <button class="btn btn-soft" style="width:100%; font-size:0.84rem;" data-tab-target="impostazioni">Completa profilo →</button>
+          <button class="btn btn-soft" style="width:100%; font-size:0.84rem;" data-route="profile/edit">Completa profilo →</button>
         </div>
 
         <!-- Badge ottenuti -->
@@ -2270,6 +2285,78 @@ function profileHtml() {
         Esci da CivicVois
       </button>
     </div>
+  `;
+}
+
+function profileEditHtml() {
+  const p = state.profile || {};
+  return `
+    <div class="topbar profile-edit-topbar">
+      <div>
+        <button class="btn btn-dark btn-small profile-edit-back" type="button" id="profile-edit-back">← Profilo</button>
+        <h1>Modifica profilo</h1>
+        <p>Aggiorna identità, foto e zona di riferimento del tuo account CivicVois.</p>
+      </div>
+    </div>
+
+    <section class="panel panel-pad profile-edit-page">
+      <div class="profile-edit-head">
+        ${avatarHtml(p, "profile-edit-avatar")}
+        <div>
+          <h2>Dati personali</h2>
+          <p>Le informazioni pubbliche aiutano gli altri cittadini a riconoscere le tue segnalazioni.</p>
+        </div>
+      </div>
+
+      <form id="profile-form" class="form-grid profile-edit-form">
+        <div class="field">
+          <label>Nome completo</label>
+          <input class="input" name="full_name" value="${escapeAttr(p.full_name || "")}" autocomplete="name" required />
+        </div>
+        <div class="field">
+          <label>Username</label>
+          <input class="input" name="username" value="${escapeAttr(p.username || "")}" autocomplete="username" required minlength="3" />
+        </div>
+        <div class="field span-2">
+          <label>Bio</label>
+          <textarea class="textarea" name="bio" maxlength="1000" placeholder="Racconta brevemente chi sei.">${escapeHtml(p.bio || "")}</textarea>
+        </div>
+        ${locationFieldsHtml(p, { required: false })}
+        <div class="field span-2">
+          <label>Foto profilo</label>
+          ${avatarUploadHtml(p, "profile")}
+        </div>
+        <div class="span-2 profile-form-actions">
+          <button class="btn btn-soft" type="button" id="profile-edit-cancel">Annulla</button>
+          <button class="btn btn-primary" type="submit">Salva profilo</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel panel-pad profile-edit-actions">
+      <div class="danger-zone danger-zone--soft">
+        <div>
+          <strong>Esporta i miei dati</strong>
+          <span>Scarica una copia dei tuoi dati personali in formato JSON.</span>
+        </div>
+        <button class="btn btn-soft export-data-btn" type="button">Esporta dati</button>
+      </div>
+
+      <div class="profile-legal-links">
+        <a href="https://civicvois.it/legal/privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
+        <a href="https://civicvois.it/legal/termini.html" target="_blank" rel="noopener">Termini</a>
+        <a href="https://civicvois.it/legal/contenuti.html" target="_blank" rel="noopener">Regole contenuti</a>
+        <a href="https://civicvois.it/legal/supporto.html" target="_blank" rel="noopener">Supporto</a>
+      </div>
+
+      <div class="danger-zone">
+        <div>
+          <strong>Elimina account</strong>
+          <span>Rimuove definitivamente il tuo profilo, le tue segnalazioni e i tuoi like. Non è reversibile.</span>
+        </div>
+        <button class="btn btn-danger delete-account-btn" type="button">Elimina account</button>
+      </div>
+    </section>
   `;
 }
 
@@ -2477,20 +2564,22 @@ function bindAppEvents(active) {
 
   if (active === "profile") {
     bindProfileTabs();
-    bindLocationControls($("#profile-form"));
-    bindAvatarUpload($("#profile-form"));
-    bindProfileForm();
     bindReportActions();
 
-    // Pulsanti "Modifica profilo" aprono tab impostazioni
+    // Pulsanti "Modifica profilo" aprono la pagina dedicata.
     ["#edit-profile-btn", "#edit-profile-btn-2", "#edit-profile-btn-3"].forEach(sel => {
-      $(sel)?.addEventListener("click", () => activateProfileTab("impostazioni"));
+      $(sel)?.addEventListener("click", () => setRoute("profile/edit"));
     });
-    // Pulsante "Completa profilo →"
-    $("[data-tab-target='impostazioni']")?.addEventListener("click", () => activateProfileTab("impostazioni"));
-    // Elimina account
+  }
+
+  if (active === "profile-edit") {
+    const form = $("#profile-form");
+    bindLocationControls(form);
+    bindAvatarUpload(form);
+    bindProfileForm();
+    $("#profile-edit-back")?.addEventListener("click", () => setRoute("profile"));
+    $("#profile-edit-cancel")?.addEventListener("click", () => setRoute("profile"));
     document.querySelector(".delete-account-btn")?.addEventListener("click", handleDeleteAccount);
-    // Esporta dati (GDPR)
     document.querySelector(".export-data-btn")?.addEventListener("click", handleExportData);
   }
 
@@ -2682,6 +2771,13 @@ function bindReportActions() {
 
   $$(".open-detail").forEach(btn => {
     btn.addEventListener("click", () => setRoute("report/" + btn.dataset.id));
+  });
+
+  $$(".profile-report-row[data-report-id]").forEach(row => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button, a")) return;
+      setRoute("report/" + row.dataset.reportId);
+    });
   });
 
   $$(".delete-own-report").forEach(btn => {
@@ -3141,7 +3237,7 @@ function activateProfileTab(tabName) {
 }
 
 function bindProfileTabs() {
-  $$(".profile-section-card").forEach(card => {
+  $$(".profile-section-card[data-tab]").forEach(card => {
     card.addEventListener("click", () => activateProfileTab(card.dataset.tab));
   });
 }
@@ -3322,10 +3418,12 @@ async function updateProfile(formData) {
   if (!payload.full_name || !payload.username) return toast("Nome completo e username sono obbligatori.", "error");
 
   try {
+    const shouldReturnToProfile = state.route === "profile/edit";
     state.profile = await backend.saveProfile(state.user.id, payload);
     await refreshData();
     toast("Profilo aggiornato.", "success");
-    render();
+    if (shouldReturnToProfile) setRoute("profile");
+    else render();
   } catch (error) {
     console.error(error);
     toast(error.message || "Profilo non aggiornato.", "error");
