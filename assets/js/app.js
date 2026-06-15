@@ -742,11 +742,20 @@ async function init() {
   backend.onAuthChange(async (_event, session) => {
     try {
       state.session = session;
-      state.user = session?.user || null;
+      const nextUser = session?.user || null;
+      state.user = nextUser;
       // Timeout anche qui: se il fetch del profilo si blocca, non deve impedire
       // il render del resto dell'app.
-      if (state.user) {
-        state.profile = await withTimeout(backend.fetchProfile(state.user.id), 7000, "profilo").catch(() => null);
+      if (nextUser) {
+        // Profilo già caricato per lo STESSO utente: lo conserviamo come fallback.
+        const sameUserProfile = state.profile && state.profile.id === nextUser.id ? state.profile : null;
+        // fetchProfile() restituisce un oggetto o lancia (mai null per l'utente
+        // corrente). Su errore/timeout (es. token in rinnovo) catch → undefined:
+        // NON azzeriamo un profilo già valido, altrimenti un semplice
+        // TOKEN_REFRESHED dirotterebbe l'utente su "Completa il profilo" pur
+        // avendolo completo.
+        const fetched = await withTimeout(backend.fetchProfile(nextUser.id), 7000, "profilo").catch(() => undefined);
+        state.profile = fetched !== undefined ? fetched : sameUserProfile;
       } else {
         state.profile = null;
       }
@@ -857,8 +866,10 @@ function normalizeRoute(route) {
   }
   if (["new", "profile", "profile/edit", "admin", "settings", "complete-profile"].includes(route) && !state.user) return "auth";
   if (route === "settings") return "profile/edit";
-  // Guard: con profilo incompleto, ogni pagina privata diventa "complete-profile"
-  if (state.user && isProfileIncomplete(state.profile) && route !== "complete-profile") {
+  // Guard: con profilo incompleto, ogni pagina privata diventa "complete-profile".
+  // Richiediamo state.profile TRUTHY: un profilo non ancora caricato/null (fetch
+  // fallito o in corso) non è "incompleto", è "sconosciuto" → non dirottare.
+  if (state.user && state.profile && isProfileIncomplete(state.profile) && route !== "complete-profile") {
     return "complete-profile";
   }
   // Profilo già completo: non lasciare l'utente bloccato sulla pagina di completamento
@@ -973,7 +984,7 @@ function render() {
   // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
   // Google), qualunque pagina privata lo dirotta alla schermata di
   // completamento, finché non la compila. Niente home con profilo a metà.
-  if (state.user && isProfileIncomplete(state.profile) && state.route !== "complete-profile" && state.route !== "report") {
+  if (state.user && state.profile && isProfileIncomplete(state.profile) && state.route !== "complete-profile" && state.route !== "report") {
     state.route = "complete-profile";
     if (window.location.hash !== "#/complete-profile") history.replaceState(null, "", "#/complete-profile");
   }
@@ -1420,90 +1431,17 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
   });
 }
 
-// ── Google: sito web (Google Identity Services) ──────────────────────────
+// ── Google: sito web (redirect OAuth via Supabase, flusso PKCE) ───────────
+// Usiamo direttamente il redirect OAuth gestito da Supabase: è il flusso
+// ufficiale e i log di produzione mostrano che è l'unico stabile sul web.
+// Il vecchio tentativo "Google Identity One Tap + popup id_token" falliva in
+// pratica sempre (One Tap spesso non si mostra per config origin/FedCM e va in
+// timeout; il popup veniva aperto fuori dal gesto utente → bloccato dal
+// browser; signInWithIdToken falliva per nonce/audience) e ricadeva comunque
+// sul redirect — quindi lo saltiamo del tutto.
 async function handleGoogleSignInWeb() {
-  try {
-    if (!GOOGLE_WEB_CLIENT_ID) throw new Error("Google Client ID Web non configurato.");
-    await loadScriptOnce("https://accounts.google.com/gsi/client");
-    const idToken = await new Promise((resolve, reject) => {
-      let settled = false;
-      let timer;
-      const finish = (fn, value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        fn(value);
-      };
-      const fallback = () => googleOAuthPopupFallback().then(
-        token => finish(resolve, token),
-        error => finish(reject, error)
-      );
-      timer = setTimeout(fallback, 3500);
-
-      window.google.accounts.id.initialize({
-        client_id: GOOGLE_WEB_CLIENT_ID,
-        callback: (response) => {
-          if (response?.credential) finish(resolve, response.credential);
-          else finish(reject, new Error("Credenziale Google non ricevuta."));
-        },
-        auto_select: false,
-        cancel_on_tap_outside: true
-      });
-      window.google.accounts.id.prompt((notification) => {
-        if (settled) return;
-        if (notification.isNotDisplayed?.() || notification.isSkippedMoment?.() || notification.isDismissedMoment?.()) {
-          fallback();
-        }
-      });
-    });
-    await finalizeSocialSession("google", idToken);
-  } catch (error) {
-    console.warn("Google Identity non completato, uso fallback Supabase OAuth.", error);
-    await startSupabaseOAuthRedirect("google");
-  }
-}
-
-// Fallback: popup OAuth implicit flow per ottenere id_token
-function googleOAuthPopupFallback() {
-  return new Promise((resolve, reject) => {
-    const nonce = Math.random().toString(36).slice(2);
-    const redirectUri = window.location.origin + "/";
-    const url = "https://accounts.google.com/o/oauth2/v2/auth"
-      + "?client_id=" + encodeURIComponent(GOOGLE_WEB_CLIENT_ID)
-      + "&response_type=id_token"
-      + "&scope=" + encodeURIComponent("openid email profile")
-      + "&redirect_uri=" + encodeURIComponent(redirectUri)
-      + "&nonce=" + nonce
-      + "&prompt=select_account";
-
-    const popup = window.open(url, "googleOAuth", "width=500,height=600");
-    if (!popup) {
-      reject(new Error("Popup Google bloccato dal browser."));
-      return;
-    }
-    const timer = setInterval(() => {
-      try {
-        if (popup.closed) {
-          clearInterval(timer);
-          reject(new Error("Login annullato."));
-          return;
-        }
-        // Quando il popup arriva su redirectUri con fragment, estraggo id_token
-        const href = popup.location.href;
-        if (href && href.startsWith(redirectUri) && href.includes("id_token=")) {
-          const hash = popup.location.hash.slice(1);
-          const params = new URLSearchParams(hash);
-          const idToken = params.get("id_token");
-          clearInterval(timer);
-          popup.close();
-          if (idToken) resolve(idToken);
-          else reject(new Error("id_token mancante."));
-        }
-      } catch (_) {
-        // cross-origin durante il flow, ignora
-      }
-    }, 400);
-  });
+  if (!GOOGLE_WEB_CLIENT_ID) throw new Error("Google Client ID Web non configurato.");
+  await startSupabaseOAuthRedirect("google");
 }
 
 async function startSupabaseOAuthRedirect(provider) {

@@ -995,7 +995,9 @@ img { display: block; max-width: 100%; }
   flex-direction: column;
   min-height: 100svh;
   min-width: 0;
-  overflow: hidden;
+  /* Solo l'asse X va contenuto; `overflow: hidden` (entrambi gli assi) rischia
+     di tagliare/contenere lo scroll verticale. `clip` sull'asse X basta. */
+  overflow-x: clip;
 }
 
 .app-header {
@@ -3741,7 +3743,12 @@ img { display: block; max-width: 100%; }
 html, body {
   width: 100%;
   max-width: 100%;
-  overflow-x: hidden;
+  /* `clip` (NON `hidden`): impedisce l'overflow orizzontale senza trasformare
+     <html>/<body> in scroll-container. Con `overflow-x: hidden` sul root,
+     WebKit/Safari desktop calcola l'altezza del root sul contenuto e sopprime
+     lo scroll del viewport → la pagina non scrolla affatto. `clip` lascia
+     `overflow-y: visible`, così il viewport scrolla normalmente. */
+  overflow-x: clip;
   margin: 0;
   padding: 0;
   position: relative;
