@@ -1201,9 +1201,12 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
       if (err) reject(err); else resolve(code);
     }
 
-    AppPlugin.addListener("appUrlOpen", (event) => {
+    const listenerHandle = AppPlugin.addListener("appUrlOpen", (event) => {
       const incoming = event?.url || "";
-      if (settled || !incoming.startsWith(redirectScheme)) return;
+      // Confronto sul solo scheme (it.civicvois.app://) per robustezza verso
+      // eventuali normalizzazioni di host/slash fatte da iOS/Android.
+      const schemePrefix = redirectScheme.split("://")[0] + "://";
+      if (settled || !incoming.startsWith(schemePrefix)) return;
       const qIndex = incoming.indexOf("?");
       const hIndex = incoming.indexOf("#");
       const query = qIndex >= 0 ? incoming.slice(qIndex + 1).split("#")[0] : "";
@@ -1216,10 +1219,13 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
       const code = params.get("code") || hashParams.get("code");
       if (!code) { finish(new Error("Codice di autorizzazione Google mancante nel redirect.")); return; }
       finish(null, code);
-    }).then((h) => {
+    });
+    // @capacitor/app su iOS nativo restituisce la handle direttamente (NON una
+    // Promise): Promise.resolve() normalizza entrambi i casi ed evita il crash
+    // ".then is undefined".
+    Promise.resolve(listenerHandle).then((h) => {
       handle = h;
-      // Apriamo il browser solo dopo che il listener è pronto, così non perdiamo
-      // il redirect se l'utente è velocissimo.
+      // Apriamo il browser solo dopo che il listener è pronto.
       try { window.open(authUrl, "_system"); }
       catch (_) { window.location.href = authUrl; }
     }).catch((e) => finish(e instanceof Error ? e : new Error("Listener deep link non registrato.")));
