@@ -364,7 +364,11 @@ function createSupabaseAdapter() {
         console.warn("Pulizia storage prima della cancellazione account non completata.", error);
       }
       await supabase.deleteAccount();   // cancella profilo + segnalazioni + like lato server
-      await supabase.auth.signOut();    // poi pulisce la sessione locale
+      try {
+        await supabase.auth.signOut({ scope: "local" }); // sessione locale: best-effort dopo delete auth.users
+      } catch (error) {
+        console.warn("Sessione locale non ripulita automaticamente dopo la cancellazione account.", error);
+      }
     },
 
     async deleteOwnStorageFiles(userId = state.user?.id) {
@@ -1158,7 +1162,10 @@ function renderCompleteProfile() {
           </div>
 
           <button class="btn btn-primary span-2" type="submit">Salva e continua</button>
-          <button class="btn btn-ghost span-2 mobile-logout-btn" type="button" style="margin-top:2px;">Esci</button>
+          <div class="complete-profile-actions span-2">
+            <button class="btn btn-ghost mobile-logout-btn" type="button">Esci</button>
+            <button class="btn btn-danger delete-account-btn" type="button">Elimina account</button>
+          </div>
         </form>
       </section>
     </main>
@@ -1172,6 +1179,7 @@ function renderCompleteProfile() {
     await lockSubmit(form, () => handleCompleteProfile(new FormData(form)));
   });
   document.querySelector(".mobile-logout-btn")?.addEventListener("click", handleLogout);
+  document.querySelector(".delete-account-btn")?.addEventListener("click", handleDeleteAccount);
 }
 
 async function handleCompleteProfile(formData) {
@@ -2726,6 +2734,11 @@ async function handleDeleteAccount() {
     danger: true
   });
   if (!ok) return;
+  const trigger = document.querySelector(".delete-account-btn");
+  if (trigger) {
+    trigger.disabled = true;
+    trigger.textContent = "Eliminazione...";
+  }
   try {
     await backend.deleteAccount();
     // Pulizia stato locale
@@ -2742,8 +2755,28 @@ async function handleDeleteAccount() {
     setRoute("landing");
   } catch (error) {
     console.error(error);
-    toast(error.message || "Eliminazione non riuscita. Riprova.", "error");
+    toast(accountDeleteErrorMessage(error), "error");
+  } finally {
+    if (trigger?.isConnected) {
+      trigger.disabled = false;
+      trigger.textContent = "Elimina account";
+    }
   }
+}
+
+function accountDeleteErrorMessage(error) {
+  const raw = String(error?.message || error?.error_description || error || "").trim();
+  const message = raw.toLowerCase();
+  if (message.includes("delete_my_account") || (message.includes("function") && message.includes("rpc"))) {
+    return "Eliminazione account non configurata sul database: applica supabase/02_moderation_delete.sql su Supabase e riprova.";
+  }
+  if (message.includes("permission denied") || message.includes("42501")) {
+    return "Eliminazione account non autorizzata dal database: controlla il grant della funzione delete_my_account.";
+  }
+  if (message.includes("jwt") || message.includes("session") || message.includes("auth") || message.includes("non autenticato")) {
+    return "Sessione scaduta. Accedi di nuovo e riprova a eliminare l'account.";
+  }
+  return niceBackendError(error, "Eliminazione non riuscita. Riprova.");
 }
 
 // Precompila i filtri territoriali con regione/provincia/comune del profilo,
