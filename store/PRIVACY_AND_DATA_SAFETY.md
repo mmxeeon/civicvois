@@ -72,7 +72,14 @@ L'app non vende dati personali e non usa advertising tracking nel codice attuale
 - Storage separato per bucket immagini.
 - Eliminazione account disponibile dall'app.
 
-Prima della pubblicazione applicare `supabase/03_hardening.sql` per completare i vincoli server e le policy storage.
+Prima della pubblicazione applicare gli script Supabase di hardening e verifica:
+
+- `supabase/03_hardening.sql`
+- `supabase/04_security_hardening.sql`
+- `supabase/05_fix_delete_account_storage.sql`
+- `supabase/06_publish_readiness_check.sql`
+
+La verifica `06` deve restituire solo righe con `ok = true`. In piu, la cancellazione account va provata con un account test sacrificabile.
 
 ## Google Play Data Safety - bozza
 

@@ -33,3 +33,6 @@ Prima della pubblicazione applicare in Supabase SQL Editor:
 1. `supabase/01_setup.sql`
 2. `supabase/02_moderation_delete.sql`
 3. `supabase/03_hardening.sql`
+4. `supabase/04_security_hardening.sql`
+5. `supabase/05_fix_delete_account_storage.sql`
+6. `supabase/06_publish_readiness_check.sql`

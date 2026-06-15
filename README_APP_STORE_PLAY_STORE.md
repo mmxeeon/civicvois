@@ -30,9 +30,14 @@ Prima di aprire Xcode/Android Studio esegui `npm run cap:sync`.
    - `supabase/01_setup.sql`
    - `supabase/02_moderation_delete.sql`
    - `supabase/03_hardening.sql`
-2. Testare login Google reale dopo la CSP di produzione.
-3. Testare refresh PWA e navigazione su `https://civicvois.it`.
-4. Testare i flussi su iPhone e Android reali:
+   - `supabase/04_security_hardening.sql`
+   - `supabase/05_fix_delete_account_storage.sql`
+   - `supabase/06_publish_readiness_check.sql`
+2. Verificare che `supabase/06_publish_readiness_check.sql` restituisca solo righe con `ok = true`.
+3. Testare eliminazione account con un account test sacrificabile.
+4. Testare login Google reale dopo la CSP di produzione.
+5. Testare refresh PWA e navigazione su `https://civicvois.it`.
+6. Testare i flussi su iPhone e Android reali:
    - registrazione
    - login
    - creazione segnalazione con una foto
@@ -41,12 +46,12 @@ Prima di aprire Xcode/Android Studio esegui `npm run cap:sync`.
    - profilo
    - esportazione dati
    - eliminazione account
-5. Verificare testi legal:
+7. Verificare testi legal:
    - privacy: `https://civicvois.it/legal/privacy`
    - termini: `https://civicvois.it/legal/termini`
    - contenuti UGC: `https://civicvois.it/legal/contenuti`
    - eliminazione account: `https://civicvois.it/legal/elimina-account`
-6. Preparare screenshot store e descrizioni usando i file in `store/`.
+8. Preparare screenshot store e descrizioni usando i file in `store/`.
 
 ## Android
 
@@ -110,7 +115,8 @@ Usa `store/STORE_LISTING.md` come base per:
 
 ## Blocchi che non si risolvono solo dal codice
 
-- Applicazione reale di `supabase/03_hardening.sql` nel progetto Supabase.
+- Applicazione reale degli script Supabase `03`, `04`, `05` e verifica `06` nel progetto Supabase.
+- Test reale di eliminazione account con account sacrificabile.
 - Verifica legale definitiva del titolare e dei testi privacy.
 - Login Google reale con account esterno.
 - Build firmate e caricate sugli store.

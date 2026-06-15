@@ -25,8 +25,18 @@ drop policy if exists "public_read_report_photos" on storage.objects;
 drop policy if exists "storage_read_reportphotos" on storage.objects;
 
 -- ── 3. search_path fisso sulle trigger function (usano solo now()) ────────────
-alter function public.set_updated_at()   set search_path = '';
-alter function public.touch_updated_at() set search_path = '';
+do $$
+begin
+  if to_regprocedure('public.set_updated_at()') is not null then
+    execute $cmd$alter function public.set_updated_at() set search_path = ''$cmd$;
+  end if;
+
+  -- Presente in alcune installazioni precedenti: opzionale, quindi non deve
+  -- far fallire lo script su database puliti creati da 01_setup.sql.
+  if to_regprocedure('public.touch_updated_at()') is not null then
+    execute $cmd$alter function public.touch_updated_at() set search_path = ''$cmd$;
+  end if;
+end $$;
 
 -- ============================================================================
 -- Verifica rapida (facoltativa):

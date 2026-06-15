@@ -27,7 +27,7 @@ npm run cap:sync
 - Verifica che refresh e deep link restino sulla piattaforma.
 - Crea una segnalazione con categoria, indirizzo verificato, descrizione e una foto.
 - Controlla Profilo, esportazione dati, eliminazione account, moderazione e like.
-- Applica su Supabase gli script in `supabase/` nell'ordine indicato, incluso `supabase/03_hardening.sql` prima della pubblicazione.
+- Applica su Supabase gli script in `supabase/` nell'ordine indicato in `supabase/README.md`, inclusi `03_hardening.sql`, `04_security_hardening.sql`, `05_fix_delete_account_storage.sql` e la verifica `06_publish_readiness_check.sql` prima della pubblicazione.
 
 ## Documenti utili
 
@@ -35,4 +35,7 @@ npm run cap:sync
 - `supabase/01_setup.sql`: schema base.
 - `supabase/02_moderation_delete.sql`: moderazione, blocchi ed eliminazione account.
 - `supabase/03_hardening.sql`: vincoli server, protezioni insert e policy storage.
+- `supabase/04_security_hardening.sql`: hardening storage e funzioni per chiudere warning Supabase.
+- `supabase/05_fix_delete_account_storage.sql`: fix obbligatorio per eliminazione account senza delete diretta da `storage.objects`.
+- `supabase/06_publish_readiness_check.sql`: query read-only per verificare che Supabase sia pronto alla review.
 - `legal/`: privacy, termini, contenuti, supporto ed eliminazione account.
