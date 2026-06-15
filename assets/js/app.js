@@ -2773,6 +2773,9 @@ function accountDeleteErrorMessage(error) {
   if (message.includes("permission denied") || message.includes("42501")) {
     return "Eliminazione account non autorizzata dal database: controlla il grant della funzione delete_my_account.";
   }
+  if (message.includes("direct deletion from storage tables") || message.includes("use the storage api")) {
+    return "La funzione database di eliminazione account va aggiornata: applica supabase/05_fix_delete_account_storage.sql su Supabase e riprova.";
+  }
   if (message.includes("jwt") || message.includes("session") || message.includes("auth") || message.includes("non autenticato")) {
     return "Sessione scaduta. Accedi di nuovo e riprova a eliminare l'account.";
   }
