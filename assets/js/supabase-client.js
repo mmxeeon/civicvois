@@ -12,6 +12,23 @@ import { createClient } from "../vendor/supabase/supabase-js.js";
 
 const SUPABASE_FETCH_TIMEOUT_MS = 25000;
 
+// ── Lock auth in-process (FIX critico) ────────────────────────────────────
+// Il lock di default di supabase-js usa navigator.locks, CONDIVISO tra tutte le
+// schede dello stesso sito. Con più schede di civicvois.it aperte (e nella
+// WebView nativa) il lock dell'auth-token andava in DEADLOCK: ogni operazione
+// autenticata (getSession/getUser/refresh, e quindi profilo, feed e scritture)
+// restava appesa PRIMA ancora di inviare una richiesta — restoreSession andava
+// in timeout (7s) e l'app mostrava feed vuoto / "Profilo non disponibile",
+// mentre l'anonimo funzionava. Qui sostituiamo il lock con una catena di
+// promise PER SCHEDA: serializza le operazioni auth nella singola scheda (niente
+// refresh concorrenti) ma senza il lock cross-scheda che causava il blocco.
+let authLockChain = Promise.resolve();
+function inProcessAuthLock(_name, _acquireTimeout, fn) {
+  const run = authLockChain.then(() => fn(), () => fn());
+  authLockChain = run.then(() => {}, () => {});
+  return run;
+}
+
 function createAbortableFetch(timeoutMs = SUPABASE_FETCH_TIMEOUT_MS) {
   return async (input, init = {}) => {
     const controller = new AbortController();
@@ -37,7 +54,8 @@ export function createSupabaseClient({ url, key }) {
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      flowType: "pkce"
+      flowType: "pkce",
+      lock: inProcessAuthLock // niente navigator.locks: evita il deadlock multi-scheda/WebView
     },
     global: {
       fetch: createAbortableFetch()
