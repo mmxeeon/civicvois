@@ -30,6 +30,14 @@ const PRIORITIES = ["bassa", "media", "alta", "urgente"];
 const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
 const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp";
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024;
+const PROFILE_STATUS = {
+  IDLE: "idle",
+  LOADING: "loading",
+  READY: "ready",
+  MISSING: "missing",
+  ERROR: "error"
+};
+const PRIVATE_PROFILE_ROUTES = new Set(["new", "profile", "profile/edit", "admin", "complete-profile"]);
 
 // Lista comuni servita LOCALMENTE (assets/data/comuni.json): niente più fetch da
 // CDN a runtime (fix audit C-13) → funziona offline e senza esporre l'IP a terzi.
@@ -367,7 +375,10 @@ function createSupabaseAdapter() {
     },
 
     async deleteAccount() {
-      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
+      const session = await ensureFreshAuthSession({ refreshWindowMs: 120000 });
+      if (!session?.user?.id || session.user.id !== state.user?.id) {
+        throw new Error("Sessione account non valida. Esci e accedi di nuovo prima di eliminare l'account.");
+      }
       // Pulizia storage best-effort E con timeout: su WebView nativa una
       // remove può restare appesa; non deve MAI bloccare la cancellazione.
       try {
@@ -433,7 +444,17 @@ function createSupabaseAdapter() {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data?.session) return null;
       const session = await ensureFreshAuthSession({ session: data.session, refreshWindowMs: 120000 }).catch(() => data.session);
-      const user = session.user;
+      const verified = await withTimeout(supabase.auth.getUser(), 8000, "verifica utente").catch((verifyError) => {
+        if (isAuthTokenError(verifyError)) throw verifyError;
+        console.warn("Verifica utente non riuscita durante il ripristino sessione.", verifyError);
+        return null;
+      });
+      if (verified?.error) {
+        if (isAuthTokenError(verified.error)) throw verified.error;
+        console.warn("Verifica utente non riuscita durante il ripristino sessione.", verified.error);
+      }
+      const user = verified?.data?.user || session.user;
+      if (!user) return null;
       // Il profilo NON deve far fallire il ripristino sessione. A freddo (app
       // nativa riaperta dopo essere stata chiusa: token scaduto in rinnovo, rete
       // WebView non ancora pronta) il fetch può fallire/andare in 401: in quel
@@ -641,14 +662,11 @@ function createSupabaseAdapter() {
 
     async _ensureProfile(user, extra = {}) {
       await ensureFreshAuthSession({ refreshWindowMs: 120000 }).catch(() => undefined);
-      // Se il profilo esiste già ed è completo (ha il comune), NON lo
-      // sovrascriviamo con i metadata del login (che al re-login possono essere
-      // parziali): lo restituiamo così com'è. Evita di azzerare regione/comune/bio
-      // salvati in precedenza e quindi il re-login che rimanda a "completa profilo".
+      // Se il profilo esiste già, anche incompleto, NON lo sovrascriviamo con
+      // metadata del login che possono essere parziali a cold-start. I campi
+      // mancanti vanno completati dalla UI dedicata, non ricreati con fallback.
       const existing = await this._loadProfile(user.id).catch(() => null);
-      if (existing && existing.comune) {
-        return existing;
-      }
+      if (existing) return existing;
 
       const metadata = user.user_metadata || {};
       const emailName = String(user.email || "utente").split("@")[0];
@@ -701,7 +719,11 @@ function installDebugHelpers() {
         publishableKey: safeKey,
         route: state?.route,
         hasUser: Boolean(state?.user),
+        hasSessionToken: Boolean(state?.session?.access_token),
         userEmail: state?.user?.email || null,
+        hasProfile: Boolean(state?.profile),
+        profileId: state?.profile?.id || null,
+        profileStatus: state?.profileStatus || null,
         reportsLoaded: state?.reports?.length || 0,
         currentPage: state?.page || 0,
         totalReports: state?.totalReports || 0,
@@ -736,6 +758,8 @@ const state = {
   session: null,
   user: null,
   profile: null,
+  profileStatus: PROFILE_STATUS.IDLE,
+  profileError: null,
   reports: [],
   totalReports: 0,
   page: 0,
@@ -762,6 +786,74 @@ const state = {
   markersMobile: [],
   uploading: false
 };
+
+function isPrivateProfileRoute(route = state.route) {
+  return PRIVATE_PROFILE_ROUTES.has(route);
+}
+
+function isProfileUnknown() {
+  return Boolean(state.user && !state.profile && state.profileStatus !== PROFILE_STATUS.MISSING);
+}
+
+function setProfileLoading(error = null) {
+  if (!state.user) {
+    state.profileStatus = PROFILE_STATUS.IDLE;
+    state.profileError = null;
+    return;
+  }
+  if (!state.profile) state.profileStatus = PROFILE_STATUS.LOADING;
+  state.profileError = error;
+}
+
+function setProfileResolved(profile) {
+  state.profile = profile || null;
+  state.profileStatus = profile
+    ? PROFILE_STATUS.READY
+    : (state.user ? PROFILE_STATUS.MISSING : PROFILE_STATUS.IDLE);
+  state.profileError = null;
+}
+
+function setProfileError(error) {
+  state.profileError = error || null;
+  if (!state.profile) state.profileStatus = PROFILE_STATUS.ERROR;
+}
+
+function hasRealAuthSession() {
+  if (DEMO_MODE) return Boolean(state.user?.id);
+  return Boolean(state.user?.id && state.session?.access_token);
+}
+
+function clearAuthLocalHints() {
+  try {
+    const inOAuthCallback = isOAuthCallbackHash(window.location.hash) || window.location.search.includes("code=");
+    if (!inOAuthCallback) localStorage.removeItem("cv_oauth_return_route");
+    localStorage.removeItem("cv_demo_user");
+  } catch {
+    // storage non disponibile: stato in memoria già ripulito
+  }
+}
+
+function clearAuthState() {
+  state.session = null;
+  state.user = null;
+  state.profile = null;
+  state.profileStatus = PROFILE_STATUS.IDLE;
+  state.profileError = null;
+  state.likes = new Set();
+  state.reports = [];
+  state.totalReports = 0;
+  state.page = 0;
+  state.pendingReports = [];
+  state.myStats = null;
+  state.blocked = new Set();
+  state.reportsLoaded = false;
+  state.filtersInitialized = false;
+  state.filters.regione = "";
+  state.filters.provincia = "";
+  state.filters.comune = "";
+  state.filters.tipo = "";
+  state.filters.q = "";
+}
 
 installDebugHelpers();
 init();
@@ -833,23 +925,41 @@ async function init() {
 
   backend.onAuthChange(async (_event, session) => {
     try {
-      state.session = session;
       const nextUser = session?.user || null;
+      if (!nextUser) {
+        clearAuthLocalHints();
+        clearAuthState();
+        await refreshData();
+        render();
+        return;
+      }
+
+      state.session = session;
       state.user = nextUser;
       // Timeout anche qui: se il fetch del profilo si blocca, non deve impedire
       // il render del resto dell'app.
-      if (nextUser) {
-        // Profilo già caricato per lo STESSO utente: lo conserviamo come fallback.
-        const sameUserProfile = state.profile && state.profile.id === nextUser.id ? state.profile : null;
-        // fetchProfile() restituisce un oggetto o lancia (mai null per l'utente
-        // corrente). Su errore/timeout (es. token in rinnovo) catch → undefined:
-        // NON azzeriamo un profilo già valido, altrimenti un semplice
-        // TOKEN_REFRESHED dirotterebbe l'utente su "Completa il profilo" pur
-        // avendolo completo.
-        const fetched = await withTimeout(backend.fetchProfile(nextUser.id), 7000, "profilo").catch(() => undefined);
-        state.profile = fetched !== undefined ? fetched : sameUserProfile;
+      // Profilo già caricato per lo STESSO utente: lo conserviamo come fallback
+      // temporaneo durante TOKEN_REFRESHED. Se cambia utente, invece, lo azzeriamo
+      // e blocchiamo le schermate private finché arriva il profilo reale.
+      const sameUserProfile = state.profile && state.profile.id === nextUser.id ? state.profile : null;
+      if (sameUserProfile) {
+        setProfileResolved(sameUserProfile);
       } else {
         state.profile = null;
+        setProfileLoading();
+      }
+
+      // fetchProfile() restituisce un oggetto, null se manca, o lancia. Su
+      // errore/timeout non inventiamo un profilo fallback: lasciamo lo stato
+      // loading/error e il retry di cold-start farà un'altra lettura.
+      const fetched = await withTimeout(backend.fetchProfile(nextUser.id, nextUser), 7000, "profilo").catch((error) => {
+        setProfileError(error);
+        return undefined;
+      });
+      if (fetched !== undefined) {
+        setProfileResolved(fetched);
+      } else if (sameUserProfile) {
+        setProfileResolved(sameUserProfile);
       }
       await refreshData();
       render();
@@ -898,35 +1008,83 @@ async function bootstrapAndLoad() {
   if (state.user && !state.profile) ensureProfileLoaded();
 }
 
-// Ricarica il profilo con backoff finché la sessione resta valida. Usa una
-// lettura pura (_loadProfile, niente upsert) per non rischiare di sovrascrivere
-// un profilo reale con dati vuoti durante i tentativi.
+// Ricarica il profilo con backoff finché la sessione resta valida. Finché il
+// profilo è sconosciuto non renderizziamo schermate account con fallback: o
+// arriva il profilo reale, o viene creato/completato per lo user.id reale.
 let profileRetryRunning = false;
 async function ensureProfileLoaded() {
   if (profileRetryRunning) return;
-  if (typeof backend._loadProfile !== "function") return;
+  if (!state.user) return;
+  if (state.profile) {
+    setProfileResolved(state.profile);
+    return;
+  }
+
+  const userId = state.user.id;
+  const loadProfile = typeof backend._loadProfile === "function"
+    ? () => backend._loadProfile(userId)
+    : () => backend.fetchProfile(userId, state.user);
+
+  setProfileLoading();
   profileRetryRunning = true;
+  let lastError = null;
+  let lastReadWasMissing = false;
   try {
-    const delays = [400, 900, 1800, 3000, 5000, 8000];
+    const delays = [0, 400, 900, 1800, 3000, 5000, 8000];
     for (const d of delays) {
-      if (!state.user || state.profile) break;
-      await wait(d);
-      if (!state.user || state.profile) break;
+      if (!state.user || state.user.id !== userId || state.profile) break;
+      if (d) await wait(d);
+      if (!state.user || state.user.id !== userId || state.profile) break;
       try {
-        const p = await backend._loadProfile(state.user.id);
+        await ensureFreshAuthSession({ refreshWindowMs: 120000 }).catch(() => undefined);
+        const p = await withTimeout(loadProfile(), 7000, "profilo");
+        lastError = null;
         if (p) {
-          state.profile = p;
+          setProfileResolved(p);
           if (state.route === "complete-profile" && !isProfileIncomplete(p)) {
             state.route = "dashboard";
             if (window.location.hash !== "#/dashboard") history.replaceState(null, "", "#/dashboard");
           }
           render();
-          break;
+          return;
         }
-      } catch (_) {
+        lastReadWasMissing = true;
+      } catch (error) {
+        lastError = error;
+        lastReadWasMissing = false;
         // riprova al giro successivo
       }
     }
+
+    if (!state.user || state.user.id !== userId || state.profile) return;
+
+    if (!lastError && lastReadWasMissing && typeof backend._ensureProfile === "function") {
+      try {
+        const created = await withTimeout(backend._ensureProfile(state.user), 10000, "creazione profilo");
+        setProfileResolved(created);
+        if (created && state.route === "complete-profile" && !isProfileIncomplete(created)) {
+          state.route = "dashboard";
+          if (window.location.hash !== "#/dashboard") history.replaceState(null, "", "#/dashboard");
+        }
+        render();
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (lastError) {
+      setProfileError(lastError);
+      render();
+      return;
+    }
+
+    setProfileResolved(null);
+    if (isPrivateProfileRoute(state.route) && state.route !== "complete-profile") {
+      state.route = "complete-profile";
+      if (window.location.hash !== "#/complete-profile") history.replaceState(null, "", "#/complete-profile");
+    }
+    render();
   } finally {
     profileRetryRunning = false;
   }
@@ -1007,6 +1165,7 @@ function normalizeRoute(route) {
   }
   // Profilo già completo: non lasciare l'utente bloccato sulla pagina di completamento
   if (route === "complete-profile" && state.user && state.profile && !isProfileIncomplete(state.profile)) return "dashboard";
+  if (route === "admin" && state.user && !state.profile) return "admin";
   if (route === "admin" && state.profile?.role !== "admin") return "dashboard";
   return route || "landing";
 }
@@ -1025,7 +1184,12 @@ async function bootstrapAuth() {
   if (!session) return;
   state.user = session.user;
   state.session = session.session || null;
-  state.profile = session.profile;
+  if (session.profile) {
+    setProfileResolved(session.profile);
+  } else {
+    state.profile = null;
+    setProfileLoading();
+  }
 }
 
 async function refreshData() {
@@ -1113,6 +1277,16 @@ function render() {
   }
   if (!state.user && ["new", "profile", "profile/edit", "admin"].includes(state.route)) return renderPageRoute("auth");
 
+  if (state.user && isProfileUnknown() && isPrivateProfileRoute(state.route)) {
+    ensureProfileLoaded();
+    return renderProfileLoadingPage();
+  }
+
+  if (state.user && !state.profile && state.profileStatus === PROFILE_STATUS.MISSING && state.route !== "complete-profile" && state.route !== "report") {
+    state.route = "complete-profile";
+    if (window.location.hash !== "#/complete-profile") history.replaceState(null, "", "#/complete-profile");
+  }
+
   if (state.user && state.profile && state.route === "complete-profile" && !isProfileIncomplete(state.profile)) {
     state.route = "dashboard";
     if (window.location.hash !== "#/dashboard") history.replaceState(null, "", "#/dashboard");
@@ -1128,6 +1302,27 @@ function render() {
   }
 
   return renderPageRoute(state.route);
+}
+
+function renderProfileLoadingPage() {
+  const isError = state.profileStatus === PROFILE_STATUS.ERROR;
+  app.innerHTML = `
+    <main class="auth-page complete-profile-page">
+      <section class="auth-card">
+        <div class="complete-profile-head">
+          ${avatarHtml({ full_name: state.user?.email || "CV" }, "complete-profile-avatar")}
+          <h1>${isError ? "Profilo non ancora disponibile" : "Caricamento profilo"}</h1>
+          <p>${isError
+            ? "La sessione è presente, ma il profilo reale non è stato recuperato. Controlla la rete o riprova tra poco."
+            : "Sto recuperando la sessione e il profilo reale collegati al tuo account."}</p>
+        </div>
+        <div class="complete-profile-actions span-2">
+          <button class="btn btn-ghost mobile-logout-btn" type="button">Esci</button>
+        </div>
+      </section>
+    </main>
+  `;
+  document.querySelector(".mobile-logout-btn")?.addEventListener("click", handleLogout);
 }
 
 function renderPageRoute(route) {
@@ -1342,6 +1537,11 @@ function renderCompleteProfile() {
 }
 
 async function handleCompleteProfile(formData) {
+  if (!hasRealAuthSession()) {
+    toast("Sessione account non ancora pronta. Attendi qualche secondo e riprova.", "error");
+    ensureProfileLoaded();
+    return;
+  }
   const location = validateLocationSelection(formData); // regione/provincia/comune obbligatori
   if (!location.ok) return toast(location.message, "error");
 
@@ -1367,7 +1567,7 @@ async function handleCompleteProfile(formData) {
     // Merge ottimistico: forziamo i valori appena inseriti così il profilo
     // risulta sicuramente completo e il guard lascia passare alla dashboard,
     // a prescindere da eventuali letture stale del backend.
-    state.profile = {
+    setProfileResolved({
       ...(state.profile || {}),
       ...(saved || {}),
       full_name: fullName,
@@ -1375,7 +1575,7 @@ async function handleCompleteProfile(formData) {
       regione: location.regione,
       provincia: location.provincia,
       comune: location.comune
-    };
+    });
     state.filtersInitialized = false; // i filtri dashboard si reimpostano dalla nuova zona
     toast("Profilo completato. Benvenuto in CivicVois!", "success");
     await refreshData();
@@ -1666,7 +1866,11 @@ async function finalizeSocialSession(provider, token, profileHint = {}) {
 async function applyAuthedSession({ user, session, profile }, provider) {
   state.user = user;
   state.session = session || null;
-  state.profile = profile;
+  if (profile) setProfileResolved(profile);
+  else {
+    state.profile = null;
+    setProfileLoading();
+  }
   await refreshData();
 
   // Gli account social nascono senza comune/provincia. Se il profilo è
@@ -1696,9 +1900,14 @@ async function handleLogin(formData) {
     const { user, session, profile } = await backend.login({ email, password });
     state.user = user;
     state.session = session || null;
-    state.profile = profile;
+    if (profile) setProfileResolved(profile);
+    else {
+      state.profile = null;
+      setProfileLoading();
+    }
     await refreshData();
     toast("Accesso effettuato.", "success");
+    if (!profile) ensureProfileLoaded();
     setRoute("dashboard");
   } catch (error) {
     console.error("Errore login", error);
@@ -1736,9 +1945,14 @@ async function handleRegister(formData) {
 
     state.user = user;
     state.session = session || null;
-    state.profile = profile;
+    if (profile) setProfileResolved(profile);
+    else {
+      state.profile = null;
+      setProfileLoading();
+    }
     await refreshData();
     toast("Registrazione completata.", "success");
+    if (!profile) ensureProfileLoaded();
     setRoute("dashboard");
   } catch (error) {
     console.error("Errore registrazione", error);
@@ -1750,19 +1964,8 @@ async function handleLogout() {
   try {
     await backend.logout();
   } catch { /* ignora */ }
-  state.user = null;
-  state.session = null;
-  state.profile = null;
-  state.likes = new Set();
-  state.reports = [];
-  state.myStats = null;
-  // I filtri territoriali si reimposteranno dal profilo del prossimo accesso
-  state.filtersInitialized = false;
-  state.filters.regione = "";
-  state.filters.provincia = "";
-  state.filters.comune = "";
-  state.filters.tipo = "";
-  state.filters.q = "";
+  clearAuthLocalHints();
+  clearAuthState();
   toast("Logout effettuato.", "success");
   setRoute("landing");
 }
@@ -2123,8 +2326,26 @@ function newReportHtml() {
 
 // ─── Profilo ──────────────────────────────────────────────────────────────────
 
+function profileLoadingInlineHtml() {
+  const isError = state.profileStatus === PROFILE_STATUS.ERROR;
+  return `
+    <div class="topbar">
+      <div>
+        <h1>${isError ? "Profilo non disponibile" : "Caricamento profilo"}</h1>
+        <p>${isError
+          ? "La sessione è presente, ma il profilo reale non è stato recuperato."
+          : "Sto recuperando il profilo reale collegato al tuo account."}</p>
+      </div>
+    </div>
+    <section class="panel panel-pad">
+      <p>${isError ? "Riprova tra qualche secondo o esci e accedi di nuovo." : "Attendi qualche istante."}</p>
+    </section>
+  `;
+}
+
 function profileHtml() {
-  const p = state.profile || {};
+  if (!state.profile) return profileLoadingInlineHtml();
+  const p = state.profile;
   // Statistiche dai dati REALI dell'utente (tutte le sue segnalazioni), non dalla
   // pagina corrente della dashboard. Fallback alla pagina se non ancora caricate.
   const mine = state.myStats?.reports || state.reports.filter(r => r.user_id === state.user?.id);
@@ -2489,7 +2710,8 @@ function profileHtml() {
 }
 
 function profileEditHtml() {
-  const p = state.profile || {};
+  if (!state.profile) return profileLoadingInlineHtml();
+  const p = state.profile;
   return `
     <div class="topbar profile-edit-topbar">
       <div>
@@ -2791,6 +3013,11 @@ function bindAppEvents(active) {
 
 async function handleExportData() {
   if (!state.user) return;
+  if (!DEMO_MODE && !state.profile) {
+    toast("Sto ancora caricando il profilo reale. Riprova tra qualche secondo.", "info");
+    ensureProfileLoaded();
+    return;
+  }
   try {
     toast("Preparo i tuoi dati…", "info");
     const reports = await (backend.fetchUserReports ? backend.fetchUserReports(state.user.id).catch(() => []) : Promise.resolve([]));
@@ -2820,6 +3047,17 @@ async function handleExportData() {
 }
 
 async function handleDeleteAccount() {
+  if (!hasRealAuthSession()) {
+    toast("Sessione account non ancora pronta. Attendi il recupero del profilo reale e riprova.", "error");
+    ensureProfileLoaded();
+    return;
+  }
+  if (!DEMO_MODE && !state.profile) {
+    toast("Sto ancora caricando il profilo reale. Riprova tra qualche secondo.", "info");
+    ensureProfileLoaded();
+    return;
+  }
+
   const ok = await confirmSheet({
     title: "Eliminare l'account?",
     message: "Verranno rimossi definitivamente il tuo profilo, tutte le tue segnalazioni e i tuoi like. L'azione non è reversibile.",
@@ -2834,16 +3072,8 @@ async function handleDeleteAccount() {
   }
   try {
     await backend.deleteAccount();
-    // Pulizia stato locale
-    state.user = null;
-    state.session = null;
-    state.profile = null;
-    state.likes = new Set();
-    state.reports = [];
-    state.myStats = null;
-    state.pendingReports = [];
-    state.filtersInitialized = false;
-    state.filters.regione = state.filters.provincia = state.filters.comune = state.filters.tipo = state.filters.q = "";
+    clearAuthLocalHints();
+    clearAuthState();
     toast("Account eliminato. Arrivederci!", "success");
     setRoute("landing");
   } catch (error) {
@@ -3629,6 +3859,11 @@ async function createReport(form) {
 }
 
 async function updateProfile(formData) {
+  if (!hasRealAuthSession()) {
+    toast("Sessione account non ancora pronta. Attendi qualche secondo e riprova.", "error");
+    ensureProfileLoaded();
+    return;
+  }
   const location = validateLocationSelection(formData, { allowEmpty: true });
   if (!location.ok) return toast(location.message, "error");
 
@@ -3647,7 +3882,8 @@ async function updateProfile(formData) {
 
   try {
     const shouldReturnToProfile = state.route === "profile/edit";
-    state.profile = await backend.saveProfile(state.user.id, payload);
+    const saved = await backend.saveProfile(state.user.id, payload);
+    setProfileResolved(saved);
     await refreshData();
     toast("Profilo aggiornato.", "success");
     if (shouldReturnToProfile) setRoute("profile");
