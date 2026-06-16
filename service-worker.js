@@ -1,4 +1,4 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v14-native-google-single-consumer";
+const CIVICVOIS_CACHE = "civicvois-pwa-v15-report-create-optional-fields";
 const APP_SHELL = [
   "/",
   "/index.html",

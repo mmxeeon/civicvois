@@ -273,6 +273,52 @@ async function restRpc(functionName, body = {}) {
   });
 }
 
+const REPORT_SELECT = "id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at";
+
+// Inserimento segnalazione via REST diretto con JWT (come per il profilo): evita
+// supabase.from().insert() che passa dal lock auth di supabase-js e poteva
+// restare appeso ("errore timeout" alla pubblicazione).
+async function restInsertReport(insertable) {
+  const rows = await supabaseRestJson(`segnalazioni?select=${REPORT_SELECT}`, {
+    method: "POST",
+    body: insertable,
+    prefer: "return=representation"
+  });
+  return Array.isArray(rows) ? (rows[0] || null) : rows;
+}
+
+// Upload foto via REST diretto allo Storage di Supabase, sempre con il JWT già
+// disponibile: niente supabase.storage (che richiede il lock auth e poteva
+// bloccarsi). Restituisce l'URL pubblico.
+async function restUploadPhoto(file, bucket) {
+  const token = currentAccessToken();
+  if (!token) throw new Error("Sessione account non disponibile.");
+  const ext = (file.name?.split(".").pop() || "jpg").toLowerCase();
+  const path = `${state.user.id}/${crypto.randomUUID()}.${ext}`;
+  const base = SUPABASE_URL.replace(/\/$/, "");
+  const response = await withTimeout(
+    fetch(`${base}/storage/v1/object/${bucket}/${path}`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": file.type || "application/octet-stream",
+        "Cache-Control": "3600",
+        "x-upsert": "false"
+      },
+      body: file
+    }),
+    25000,
+    "caricamento foto"
+  );
+  if (!response.ok) {
+    let details = "";
+    try { details = await response.text(); } catch {}
+    throw new Error(details || `Caricamento foto non riuscito (${response.status}).`);
+  }
+  return `${base}/storage/v1/object/public/${bucket}/${path}`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  ADAPTER BACKEND
 //  Interfaccia uniforme: backend.login(), backend.register(), ecc.
@@ -683,21 +729,16 @@ function createSupabaseAdapter() {
     },
 
     async createReport(payload) {
-      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       if (payload.photoFile instanceof File && payload.photoFile.size > 0) {
         payload.photo_url = await this.uploadPhoto(payload.photoFile, "report-photos");
       }
       const insertable = { ...payload };
       delete insertable.photoFile; // il File non va serializzato nel JSON
-      const { data, error } = await withRetry(() =>
-        supabase
-          .from("segnalazioni")
-          .insert(insertable)
-          .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
-          .single()
-      );
-      if (error) throw error;
-      return data; // record salvato con id/created_at per update ottimistico stabile
+      // Inserimento via REST diretto con il JWT già disponibile (in memoria/
+      // localStorage): evita ensureFreshAuthSession e supabase.from().insert(),
+      // che passano dal lock auth di supabase-js e potevano restare appesi
+      // ("errore timeout" alla pubblicazione). Stesso approccio del profilo.
+      return restInsertReport(insertable);
     },
 
     async deleteReport(id) {
@@ -730,9 +771,15 @@ function createSupabaseAdapter() {
     },
 
     async uploadPhoto(file, bucket) {
-      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) throw new Error("Formato immagine non supportato.");
       if (file.size > MAX_IMAGE_SIZE_BYTES) throw new Error("Immagine troppo grande. Limite: 5 MB.");
+      // Upload via REST diretto con JWT: niente supabase.storage (lock auth) né
+      // ensureFreshAuthSession, che potevano bloccarsi.
+      try {
+        return await restUploadPhoto(file, bucket);
+      } catch (directError) {
+        console.warn("Upload foto via REST diretto non riuscito, provo client Supabase.", directError);
+      }
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
       const path = `${state.user.id}/${crypto.randomUUID()}.${ext}`;
       const { error } = await withTimeout(
@@ -2856,43 +2903,28 @@ function newReportHtml() {
           </div>
         </div>
 
-        <!-- ── 4 Titolo ── -->
+        <!-- ── 4 Descrizione (facoltativa) ── -->
         <div class="nr-section panel">
           <div class="nr-section-header">
             <span class="nr-section-num">4</span>
-            <div><h2 class="nr-section-title">Titolo <span class="nr-required">(obbligatorio)</span></h2></div>
+            <div><h2 class="nr-section-title">Descrizione <span class="field-optional">(facoltativa)</span></h2></div>
           </div>
           <div class="nr-field">
-            <input class="input" name="titolo" id="nr-titolo" placeholder="Es. Buche in via Roma" required maxlength="100" autocomplete="off" />
+            <textarea class="textarea nr-textarea" name="descrizione" id="nr-desc" placeholder="Aggiungi dettagli se vuoi (facoltativo)…" maxlength="1000"></textarea>
             <div class="nr-char-row">
-              <small class="field-hint">Sii breve e chiaro: il titolo aiuta a identificare subito il problema.</small>
-              <span class="nr-char-count" id="titolo-count">0/100</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── 5 Descrizione ── -->
-        <div class="nr-section panel">
-          <div class="nr-section-header">
-            <span class="nr-section-num">5</span>
-            <div><h2 class="nr-section-title">Descrizione <span class="nr-required">(obbligatoria)</span></h2></div>
-          </div>
-          <div class="nr-field">
-            <textarea class="textarea nr-textarea" name="descrizione" id="nr-desc" placeholder="Descrivi nel dettaglio il problema segnalato…" required minlength="12" maxlength="1000"></textarea>
-            <div class="nr-char-row">
-              <small class="field-hint">Fornisci più dettagli possibili: quando si verifica, da quanto tempo, impatto.</small>
+              <small class="field-hint">Puoi lasciarla vuota. Se vuoi, descrivi quando si verifica, da quanto tempo, l'impatto.</small>
               <span class="nr-char-count" id="desc-count">0/1000</span>
             </div>
           </div>
         </div>
 
-        <!-- ── 6 Foto ── -->
+        <!-- ── 5 Foto (facoltativa) ── -->
         <div class="nr-section panel">
           <div class="nr-section-header">
-            <span class="nr-section-num">6</span>
+            <span class="nr-section-num">5</span>
             <div>
-              <h2 class="nr-section-title">Foto <span class="nr-required">(obbligatoria)</span></h2>
-              <p class="nr-section-sub">Carica una foto chiara per descrivere meglio il problema.</p>
+              <h2 class="nr-section-title">Foto <span class="field-optional">(facoltativa)</span></h2>
+              <p class="nr-section-sub">Se vuoi, carica una foto chiara del problema. Puoi anche pubblicare senza.</p>
             </div>
           </div>
           <div class="nr-photo-grid" id="photo-grid">
@@ -3667,7 +3699,36 @@ async function handleExportData() {
   }
 }
 
+// Overlay bloccante mostrato DURANTE l'eliminazione account: spiega all'utente
+// che l'operazione è in corso e di non chiudere l'app, e — coprendo tutto lo
+// schermo — impedisce click multipli. Self-contained (niente modifiche al CSS).
+function showAccountDeletingOverlay() {
+  if (document.getElementById("cv-deleting-overlay")) return;
+  if (!document.getElementById("cv-spin-kf")) {
+    const st = document.createElement("style");
+    st.id = "cv-spin-kf";
+    st.textContent = "@keyframes cv-spin{to{transform:rotate(360deg)}}";
+    document.head.appendChild(st);
+  }
+  const el = document.createElement("div");
+  el.id = "cv-deleting-overlay";
+  el.setAttribute("role", "alert");
+  el.setAttribute("aria-busy", "true");
+  el.style.cssText = "position:fixed;inset:0;z-index:2147483646;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:rgba(2,6,17,0.93);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);padding:28px;text-align:center;";
+  el.innerHTML =
+    '<div style="width:44px;height:44px;border:4px solid rgba(45,212,191,0.25);border-top-color:#2dd4bf;border-radius:50%;animation:cv-spin 0.9s linear infinite;"></div>' +
+    '<div style="color:#e6f7f4;font-weight:800;font-size:1.05rem;">Eliminazione account in corso…</div>' +
+    '<div style="color:#9fb3bd;font-size:0.92rem;line-height:1.45;max-width:300px;">Stiamo eliminando il tuo profilo e i tuoi dati. <b style="color:#e6f7f4;">Non chiudere l\'app</b> finché non termina.</div>';
+  (document.body || document.documentElement).appendChild(el);
+}
+
+function hideAccountDeletingOverlay() {
+  document.getElementById("cv-deleting-overlay")?.remove();
+}
+
+let accountDeletionInProgress = false;
 async function handleDeleteAccount() {
+  if (accountDeletionInProgress) return; // protezione contro click multipli
   if (!hasRealAuthSession()) {
     toast("Sessione account non ancora pronta. Attendi il recupero del profilo reale e riprova.", "error");
     ensureProfileLoaded();
@@ -3681,11 +3742,17 @@ async function handleDeleteAccount() {
     danger: true
   });
   if (!ok) return;
+
+  accountDeletionInProgress = true;
   const trigger = document.querySelector(".delete-account-btn");
   if (trigger) {
     trigger.disabled = true;
     trigger.textContent = "Eliminazione...";
   }
+  // Disabilita anche logout/altri pulsanti elimina presenti e mostra l'overlay.
+  document.querySelectorAll(".delete-account-btn, .mobile-logout-btn, #logout-btn").forEach(b => { b.disabled = true; });
+  showAccountDeletingOverlay();
+
   const deletedUserId = state.user?.id;
   try {
     await backend.deleteAccount();
@@ -3698,11 +3765,15 @@ async function handleDeleteAccount() {
   } catch (error) {
     console.error(error);
     toast(accountDeleteErrorMessage(error), "error");
-  } finally {
+    // Su errore riabilita i controlli così l'utente può riprovare.
+    document.querySelectorAll(".delete-account-btn, .mobile-logout-btn, #logout-btn").forEach(b => { b.disabled = false; });
     if (trigger?.isConnected) {
       trigger.disabled = false;
       trigger.textContent = "Elimina account";
     }
+  } finally {
+    accountDeletionInProgress = false;
+    hideAccountDeletingOverlay();
   }
 }
 
@@ -4187,7 +4258,6 @@ function bindNewReportForm() {
     input.addEventListener("input", update);
     update();
   }
-  bindCharCounter("nr-titolo", "titolo-count", 100);
   bindCharCounter("nr-desc", "desc-count", 1000);
 
   // ── Photo upload & previews ───────────────────────────────────────────
@@ -4408,10 +4478,14 @@ async function createReport(form) {
   const selectedPhotos = formEl && Array.isArray(formEl._cvPhotos) ? formEl._cvPhotos : [];
   const photoFile = selectedPhotos[0] || formData.get("photo");
 
+  const tipo = clean(formData.get("tipo"));
   const payload = {
     user_id: state.user.id,
-    titolo: clean(formData.get("titolo")),
-    tipo: clean(formData.get("tipo")),
+    // Il titolo non si chiede più all'utente: coincide con la categoria scelta.
+    titolo: tipo,
+    tipo: tipo,
+    // Facoltativi. Colonne NOT NULL: salviamo stringa vuota '' (mai null) quando
+    // l'utente non li compila. clean() restituisce sempre una stringa.
     descrizione: clean(formData.get("descrizione")),
     priorita: clean(formData.get("priorita")) || "media",
     stato: "nuova",
@@ -4422,22 +4496,21 @@ async function createReport(form) {
     civico: clean(formData.get("civico")),
     lat: coords?.lat || null,
     lng: coords?.lng || null,
-    photo_url: null,
+    photo_url: "", // NOT NULL: '' quando non c'è foto (l'UI tratta '' come "senza foto")
     like_count: 0,
     photoFile: photoFile instanceof File && photoFile.size > 0 ? photoFile : null
   };
 
-  if (!payload.titolo || !payload.tipo || !payload.descrizione || !payload.comune) {
-    return toast("Categoria, posizione, titolo e descrizione sono obbligatori.", "error");
+  // Obbligatori: categoria, posizione (comune) e via. Descrizione, civico e foto
+  // sono facoltativi.
+  if (!payload.tipo || !payload.comune) {
+    return toast("Scegli la categoria e la posizione: sono obbligatorie.", "error");
   }
   if (!payload.via) {
     return toast("Inserisci la via prima di inviare la segnalazione.", "error");
   }
-  if (!payload.photoFile) {
-    return toast("Aggiungi almeno una foto: è obbligatoria per la segnalazione.", "error");
-  }
   if (hasProhibitedContent(payload.titolo, payload.descrizione)) {
-    return toast("Il testo contiene termini offensivi: modifica titolo o descrizione prima di inviare.", "error");
+    return toast("Il testo contiene termini offensivi: modifica la descrizione prima di inviare.", "error");
   }
 
   // Verifica indirizzo OBBLIGATORIA e bloccante: l'invio è permesso solo con
