@@ -10,6 +10,27 @@
 
 import { createClient } from "../vendor/supabase/supabase-js.js";
 
+const SUPABASE_FETCH_TIMEOUT_MS = 25000;
+
+function createAbortableFetch(timeoutMs = SUPABASE_FETCH_TIMEOUT_MS) {
+  return async (input, init = {}) => {
+    const controller = new AbortController();
+    const upstreamSignal = init.signal;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    if (upstreamSignal) {
+      if (upstreamSignal.aborted) controller.abort();
+      else upstreamSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+
+    try {
+      return await fetch(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
 export function createSupabaseClient({ url, key }) {
   const client = createClient(url, key, {
     auth: {
@@ -17,6 +38,9 @@ export function createSupabaseClient({ url, key }) {
       autoRefreshToken: true,
       detectSessionInUrl: true,
       flowType: "pkce"
+    },
+    global: {
+      fetch: createAbortableFetch()
     }
   });
 

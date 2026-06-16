@@ -78,8 +78,14 @@ async function withRetry(operation, attempts = 2) {
       const result = await operation();
       lastResult = result;
       if (!result?.error || !isRetryableError(result.error)) return result;
+      if (isAuthTokenError(result.error) && attempt < attempts - 1) {
+        await ensureFreshAuthSession({ force: true }).catch(() => undefined);
+      }
     } catch (error) {
       lastThrown = error;
+      if (isAuthTokenError(error) && attempt < attempts - 1) {
+        await ensureFreshAuthSession({ force: true }).catch(() => undefined);
+      }
       if (!isRetryableError(error) || attempt === attempts - 1) throw error;
     }
     await wait(450 * (attempt + 1));
@@ -90,7 +96,10 @@ async function withRetry(operation, attempts = 2) {
 
 function isRetryableError(error) {
   const message = String(error?.message || error || "").toLowerCase();
-  return message.includes("failed to fetch") || message.includes("network") || message.includes("timeout");
+  return isAuthTokenError(error)
+    || message.includes("failed to fetch")
+    || message.includes("network")
+    || message.includes("timeout");
 }
 
 function wait(ms) {
@@ -358,6 +367,7 @@ function createSupabaseAdapter() {
     },
 
     async deleteAccount() {
+      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
       // Pulizia storage best-effort E con timeout: su WebView nativa una
       // remove può restare appesa; non deve MAI bloccare la cancellazione.
       try {
@@ -367,7 +377,7 @@ function createSupabaseAdapter() {
       }
       // RPC con timeout: se la richiesta resta appesa (rete/WebView), non lasciamo
       // il bottone su "Eliminazione..." all'infinito — l'utente vede un errore e riprova.
-      await withTimeout(supabase.deleteAccount(), 20000, "eliminazione account");
+      await withTimeout(withRetry(() => supabase.deleteAccount(), 2), 20000, "eliminazione account");
       try {
         await withTimeout(supabase.auth.signOut({ scope: "local" }), 5000, "logout"); // best-effort dopo delete auth.users
       } catch (error) {
@@ -377,10 +387,13 @@ function createSupabaseAdapter() {
 
     async deleteOwnStorageFiles(userId = state.user?.id) {
       if (!userId) return;
-      const { data: reports, error: reportsError } = await supabase
-        .from("segnalazioni")
-        .select("photo_url")
-        .eq("user_id", userId);
+      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
+      const { data: reports, error: reportsError } = await withRetry(() =>
+        supabase
+          .from("segnalazioni")
+          .select("photo_url")
+          .eq("user_id", userId)
+      );
       if (reportsError) throw reportsError;
 
       const profile = state.profile?.id === userId ? state.profile : await this._loadProfile(userId).catch(() => null);
@@ -388,11 +401,11 @@ function createSupabaseAdapter() {
       const avatarPaths = uniqueOwnStoragePaths([profile?.avatar_url], "avatars", userId);
 
       if (reportPaths.length) {
-        const { error } = await supabase.storage.from("report-photos").remove(reportPaths);
+        const { error } = await withRetry(() => supabase.storage.from("report-photos").remove(reportPaths), 2);
         if (error) throw error;
       }
       if (avatarPaths.length) {
-        const { error } = await supabase.storage.from("avatars").remove(avatarPaths);
+        const { error } = await withRetry(() => supabase.storage.from("avatars").remove(avatarPaths), 2);
         if (error) throw error;
       }
     },
@@ -419,7 +432,8 @@ function createSupabaseAdapter() {
     async restoreSession() {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data?.session) return null;
-      const user = data.session.user;
+      const session = await ensureFreshAuthSession({ session: data.session, refreshWindowMs: 120000 }).catch(() => data.session);
+      const user = session.user;
       // Il profilo NON deve far fallire il ripristino sessione. A freddo (app
       // nativa riaperta dopo essere stata chiusa: token scaduto in rinnovo, rete
       // WebView non ancora pronta) il fetch può fallire/andare in 401: in quel
@@ -427,7 +441,7 @@ function createSupabaseAdapter() {
       // ricaricato da onAuthChange (TOKEN_REFRESHED) e il guard non dirotta su
       // "Completa profilo" quando il profilo è solo "non ancora caricato".
       const profile = await this.fetchProfile(user.id, user).catch(() => null);
-      return { user, session: data.session, profile };
+      return { user, session, profile };
     },
 
     async fetchReportById(id) {
@@ -512,6 +526,7 @@ function createSupabaseAdapter() {
     },
 
     async saveProfile(userId, payload) {
+      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
       if (payload.avatarFile instanceof File && payload.avatarFile.size > 0) {
         payload.avatar_url = await this.uploadPhoto(payload.avatarFile, "avatars");
       }
@@ -522,19 +537,23 @@ function createSupabaseAdapter() {
       // Timeout: il salvataggio non deve mai restare appeso (su WebView nativa
       // una scrittura può non tornare); meglio un errore "riprova" che un blocco.
       const { data, error } = await withTimeout(
-        supabase
-          .from("profiles")
-          .upsert({
-            id: userId,
-            full_name: payload.full_name,
-            username: payload.username,
-            bio: payload.bio,
-            regione: payload.regione,
-            provincia: payload.provincia,
-            comune: payload.comune,
-            avatar_url: payload.avatar_url,
-            updated_at: new Date().toISOString()
-          }, { onConflict: "id" }),
+        withRetry(() =>
+          supabase
+            .from("profiles")
+            .upsert({
+              id: userId,
+              full_name: payload.full_name,
+              username: payload.username,
+              bio: payload.bio,
+              regione: payload.regione,
+              provincia: payload.provincia,
+              comune: payload.comune,
+              avatar_url: payload.avatar_url,
+              updated_at: new Date().toISOString()
+            }, { onConflict: "id" })
+            .select("*")
+            .single(),
+        2),
         15000,
         "salvataggio profilo"
       );
@@ -544,16 +563,19 @@ function createSupabaseAdapter() {
     },
 
     async createReport(payload) {
+      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
       if (payload.photoFile instanceof File && payload.photoFile.size > 0) {
         payload.photo_url = await this.uploadPhoto(payload.photoFile, "report-photos");
       }
       const insertable = { ...payload };
       delete insertable.photoFile; // il File non va serializzato nel JSON
-      const { data, error } = await supabase
-        .from("segnalazioni")
-        .insert(insertable)
-        .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
-        .single();
+      const { data, error } = await withRetry(() =>
+        supabase
+          .from("segnalazioni")
+          .insert(insertable)
+          .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
+          .single()
+      );
       if (error) throw error;
       return data; // record salvato con id/created_at per update ottimistico stabile
     },
@@ -588,11 +610,16 @@ function createSupabaseAdapter() {
     },
 
     async uploadPhoto(file, bucket) {
+      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
       if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) throw new Error("Formato immagine non supportato.");
       if (file.size > MAX_IMAGE_SIZE_BYTES) throw new Error("Immagine troppo grande. Limite: 5 MB.");
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
       const path = `${state.user.id}/${crypto.randomUUID()}.${ext}`;
-      const { error } = await supabase.storage.from(bucket).upload(path, file, { cacheControl: "3600", upsert: false });
+      const { error } = await withTimeout(
+        withRetry(() => supabase.storage.from(bucket).upload(path, file, { cacheControl: "3600", upsert: false }), 2),
+        20000,
+        "caricamento foto"
+      );
       if (error) throw error;
       const { data } = supabase.storage.from(bucket).getPublicUrl(path);
       return data.publicUrl;
@@ -613,6 +640,7 @@ function createSupabaseAdapter() {
     },
 
     async _ensureProfile(user, extra = {}) {
+      await ensureFreshAuthSession({ refreshWindowMs: 120000 }).catch(() => undefined);
       // Se il profilo esiste già ed è completo (ha il comune), NON lo
       // sovrascriviamo con i metadata del login (che al re-login possono essere
       // parziali): lo restituiamo così com'è. Evita di azzerare regione/comune/bio
@@ -637,21 +665,26 @@ function createSupabaseAdapter() {
         avatar_url: clean(extra.avatar_url || metadata.avatar_url || "")
       };
 
-      const { error } = await supabase
+      const { data, error } = await withRetry(() => supabase
         .from("profiles")
-        .upsert(payload, { onConflict: "id", ignoreDuplicates: false });
+        .upsert(payload, { onConflict: "id", ignoreDuplicates: false })
+        .select("*")
+        .single(), 2);
 
       if (error && String(error.message || "").toLowerCase().includes("duplicate")) {
         const altPayload = { ...payload, username: `${fallbackUsername}-${String(user.id).slice(0, 6)}` };
-        const { error: altError } = await supabase
+        const { data: altData, error: altError } = await withRetry(() => supabase
           .from("profiles")
-          .upsert(altPayload, { onConflict: "id", ignoreDuplicates: false });
+          .upsert(altPayload, { onConflict: "id", ignoreDuplicates: false })
+          .select("*")
+          .single(), 2);
         if (altError) throw altError;
+        return altData || this._loadProfile(user.id);
       } else if (error) {
         throw error;
       }
 
-      return this._loadProfile(user.id);
+      return data || this._loadProfile(user.id);
     }
   };
 }
@@ -743,6 +776,49 @@ function withTimeout(promise, ms, label = "operazione") {
     timer = setTimeout(() => reject(new Error(`Timeout ${label} (${ms}ms)`)), ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+function isAuthTokenError(error) {
+  const status = Number(error?.status || error?.code || 0);
+  const message = String(error?.message || error?.error_description || error || "").toLowerCase();
+  if (status === 401 && (message.includes("jwt") || message.includes("token") || message.includes("expired") || message.includes("invalid"))) return true;
+  return message.includes("jwt expired")
+    || message.includes("invalid jwt")
+    || message.includes("refresh token")
+    || message.includes("access token");
+}
+
+function syncSessionState(session) {
+  if (!session) return null;
+  state.session = session;
+  if (session.user) state.user = session.user;
+  return session;
+}
+
+function shouldRefreshSession(session, refreshWindowMs = 90000) {
+  const expiresAt = Number(session?.expires_at || 0) * 1000;
+  if (!expiresAt) return false;
+  return expiresAt - Date.now() <= refreshWindowMs;
+}
+
+async function ensureFreshAuthSession({ force = false, session = null, refreshWindowMs = 90000 } = {}) {
+  if (!supabase?.auth) return null;
+
+  let current = session;
+  if (!current) {
+    const { data, error } = await withTimeout(supabase.auth.getSession(), 8000, "lettura sessione");
+    if (error) throw error;
+    current = data?.session || null;
+  }
+  if (!current) return null;
+
+  if (!force && !shouldRefreshSession(current, refreshWindowMs)) {
+    return syncSessionState(current);
+  }
+
+  const { data, error } = await withTimeout(supabase.auth.refreshSession(current), 12000, "rinnovo sessione");
+  if (error) throw error;
+  return syncSessionState(data?.session || current);
 }
 
 async function init() {
@@ -840,6 +916,10 @@ async function ensureProfileLoaded() {
         const p = await backend._loadProfile(state.user.id);
         if (p) {
           state.profile = p;
+          if (state.route === "complete-profile" && !isProfileIncomplete(p)) {
+            state.route = "dashboard";
+            if (window.location.hash !== "#/dashboard") history.replaceState(null, "", "#/dashboard");
+          }
           render();
           break;
         }
@@ -926,7 +1006,7 @@ function normalizeRoute(route) {
     return "complete-profile";
   }
   // Profilo già completo: non lasciare l'utente bloccato sulla pagina di completamento
-  if (route === "complete-profile" && state.user && !isProfileIncomplete(state.profile)) return "dashboard";
+  if (route === "complete-profile" && state.user && state.profile && !isProfileIncomplete(state.profile)) return "dashboard";
   if (route === "admin" && state.profile?.role !== "admin") return "dashboard";
   return route || "landing";
 }
@@ -1032,6 +1112,11 @@ function render() {
     return state.route === "auth" ? renderPageRoute("auth") : renderPageRoute("landing");
   }
   if (!state.user && ["new", "profile", "profile/edit", "admin"].includes(state.route)) return renderPageRoute("auth");
+
+  if (state.user && state.profile && state.route === "complete-profile" && !isProfileIncomplete(state.profile)) {
+    state.route = "dashboard";
+    if (window.location.hash !== "#/dashboard") history.replaceState(null, "", "#/dashboard");
+  }
 
   // ── GUARD CENTRALE: profilo incompleto ──────────────────────────────────
   // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
@@ -1213,11 +1298,21 @@ function renderCompleteProfile() {
           <p>Bastano pochi dati per iniziare a usare CivicVois. La tua zona è obbligatoria; foto e bio sono facoltative.</p>
         </div>
         <form class="auth-form" id="complete-profile-form">
+          <div class="field">
+            <label>Nome completo</label>
+            <input class="input" name="full_name" type="text" autocomplete="name" maxlength="80" value="${escapeHtml(p.full_name || "")}" placeholder="Es. Mattia Molteni" required />
+          </div>
+
+          <div class="field">
+            <label>Username</label>
+            <input class="input" name="username" type="text" autocomplete="username" maxlength="32" value="${escapeHtml(p.username || "")}" placeholder="Es. mattia" required />
+          </div>
+
           ${locationFieldsHtml(p, { required: true })}
 
           <div class="field span-2">
             <label>Bio <span class="field-optional">(facoltativa)</span></label>
-            <textarea class="textarea" name="bio" maxlength="1000" placeholder="Racconta brevemente chi sei o il tuo legame col territorio.">${escapeHtml(p.bio || "")}</textarea>
+            <textarea class="textarea" name="bio" maxlength="500" placeholder="Racconta brevemente chi sei o il tuo legame col territorio.">${escapeHtml(p.bio || "")}</textarea>
           </div>
 
           <div class="field span-2">
@@ -1252,9 +1347,13 @@ async function handleCompleteProfile(formData) {
 
   const p = state.profile || {};
   const avatarFile = formData.get("avatar_file");
+  const fullName = clean(formData.get("full_name"));
+  const username = cleanUsername(formData.get("username"));
+  if (!fullName || !username) return toast("Nome completo e username sono obbligatori.", "error");
+
   const payload = {
-    full_name: p.full_name || "",
-    username: p.username || "",
+    full_name: fullName,
+    username,
     bio: clean(formData.get("bio")),                                  // facoltativa
     avatar_url: clean(formData.get("avatar_url")) || p.avatar_url || "", // foto attuale o scelta
     avatarFile: avatarFile instanceof File && avatarFile.size > 0 ? avatarFile : null,
@@ -1271,6 +1370,8 @@ async function handleCompleteProfile(formData) {
     state.profile = {
       ...(state.profile || {}),
       ...(saved || {}),
+      full_name: fullName,
+      username,
       regione: location.regione,
       provincia: location.provincia,
       comune: location.comune
@@ -1324,7 +1425,7 @@ function registerFormHtml() {
       ${locationFieldsHtml({}, { required: true })}
       <div class="field span-2">
         <label>Bio</label>
-        <textarea class="textarea" name="bio" placeholder="Racconta brevemente chi sei o il tuo legame col territorio."></textarea>
+        <textarea class="textarea" name="bio" maxlength="500" placeholder="Racconta brevemente chi sei o il tuo legame col territorio."></textarea>
       </div>
       <div class="field span-2">
         <label>Foto profilo</label>
@@ -1571,12 +1672,13 @@ async function applyAuthedSession({ user, session, profile }, provider) {
   // Gli account social nascono senza comune/provincia. Se il profilo è
   // incompleto, lo mandiamo alla pagina dedicata di completamento (il guard
   // centrale in render()/normalizeRoute lo terrebbe comunque lì).
-  if (isProfileIncomplete(profile)) {
+  if (profile && isProfileIncomplete(profile)) {
     setRoute("complete-profile");
     return;
   }
 
   toast("Accesso con " + provider + " effettuato.", "success");
+  if (!profile) ensureProfileLoaded();
   setRoute("dashboard");
 }
 
@@ -1584,7 +1686,7 @@ async function applyAuthedSession({ user, session, profile }, provider) {
 // partecipare in modo utile: le segnalazioni sono georeferenziate sul comune).
 function isProfileIncomplete(profile) {
   if (!profile) return true;
-  return !profile.comune || !profile.full_name;
+  return !clean(profile.comune) || !clean(profile.full_name);
 }
 
 async function handleLogin(formData) {
@@ -2417,7 +2519,7 @@ function profileEditHtml() {
         </div>
         <div class="field span-2">
           <label>Bio</label>
-          <textarea class="textarea" name="bio" maxlength="1000" placeholder="Racconta brevemente chi sei.">${escapeHtml(p.bio || "")}</textarea>
+          <textarea class="textarea" name="bio" maxlength="500" placeholder="Racconta brevemente chi sei.">${escapeHtml(p.bio || "")}</textarea>
         </div>
         ${locationFieldsHtml(p, { required: false })}
         <div class="field span-2">
