@@ -1378,12 +1378,63 @@ async function loadMyStats() {
   }
 }
 
+// ── Cache locale del feed segnalazioni ────────────────────────────────────
+// Come per il profilo: a freddo (app nativa riaperta) la prima lettura del feed
+// può fallire (rete WebView non ancora pronta), lasciando la lista vuota.
+// Teniamo in cache l'ultima pagina 0 per mostrarla SUBITO e ritentiamo finché
+// arriva quella fresca, così le segnalazioni non spariscono al riavvio.
+const REPORTS_CACHE_KEY = "cv_reports_feed_v1";
+
+function writeCachedReports(reports, total) {
+  try { writeLocal(REPORTS_CACHE_KEY, { reports: (reports || []).slice(0, 60), total: total || 0 }); } catch {}
+}
+
+function readCachedReports() {
+  const cached = readLocal(REPORTS_CACHE_KEY, null);
+  return cached && Array.isArray(cached.reports) ? cached : null;
+}
+
+let reportsRetryRunning = false;
+function scheduleReportsRetry() {
+  if (reportsRetryRunning) return;
+  reportsRetryRunning = true;
+  (async () => {
+    const delays = [800, 1800, 3500, 6000];
+    for (const d of delays) {
+      if (state.reportsLoaded) break;
+      await wait(d);
+      if (state.reportsLoaded) break;
+      if (!state.user && state.route === "auth") break;
+      try {
+        const { reports, total } = await backend.fetchReports({ page: 0 });
+        state.reports = reports;
+        state.totalReports = total;
+        state.reportsLoaded = true;
+        writeCachedReports(reports, total);
+        render();
+        break;
+      } catch (_) { /* riprova al giro successivo */ }
+    }
+    reportsRetryRunning = false;
+  })();
+}
+
 async function loadReports() {
+  // Seed istantaneo dalla cache al primo caricamento (cold-start): il feed non
+  // resta vuoto mentre arriva la risposta fresca dal server.
+  if (!state.reportsLoaded && state.page === 0 && !state.reports.length) {
+    const cached = readCachedReports();
+    if (cached && cached.reports.length) {
+      state.reports = cached.reports;
+      state.totalReports = cached.total;
+    }
+  }
   try {
     const { reports, total } = await backend.fetchReports({ page: state.page });
     state.reports = reports;
     state.totalReports = total;
     state.reportsLoaded = true;
+    if (state.page === 0) writeCachedReports(reports, total);
 
     // Merge segnalazioni appena create: finché il server (lista eventually
     // consistent) non le restituisce, le teniamo visibili in cima. Appena
@@ -1397,8 +1448,19 @@ async function loadReports() {
     }
   } catch (error) {
     console.error("Errore lettura segnalazioni", error);
-    state.reports = [];
-    if (state.route !== "auth") {
+    // Cold-start: NON azzeriamo il feed. Se è vuoto proviamo la cache e
+    // ritentiamo in background. Niente toast d'allarme al primo tentativo a
+    // freddo: lo mostriamo solo se avevamo già caricato prima (vera rete persa).
+    if (!state.reports.length) {
+      const cached = readCachedReports();
+      if (cached && cached.reports.length) {
+        state.reports = cached.reports;
+        state.totalReports = cached.total;
+      }
+    }
+    if (!state.reportsLoaded) {
+      scheduleReportsRetry();
+    } else if (state.route !== "auth") {
       toast(niceBackendError(error, "Non riesco a leggere le segnalazioni."), "error");
     }
   }
