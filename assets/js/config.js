@@ -6,9 +6,13 @@
 export const IS_NATIVE_APP = (() => {
   try {
     if (typeof window === "undefined") return false;
-    if (window.Capacitor?.isNativePlatform?.()) return true;
-    const origin = window.location?.origin || "";
-    if (origin.startsWith("capacitor://")) return true;
+    const capacitor = window.Capacitor;
+    if (capacitor?.isNativePlatform?.()) return true;
+    if (["ios", "android"].includes(String(capacitor?.getPlatform?.() || "").toLowerCase())) return true;
+    const origin = String(window.location?.origin || "").toLowerCase();
+    const protocol = String(window.location?.protocol || "").toLowerCase();
+    if (origin.startsWith("capacitor://") || origin.startsWith("civicvois://") || origin.startsWith("ionic://")) return true;
+    if (["capacitor:", "civicvois:", "ionic:"].includes(protocol)) return true;
     if (origin === "http://localhost" || origin === "https://localhost") return true;
     return false;
   } catch {

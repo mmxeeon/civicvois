@@ -49,7 +49,7 @@ const NATIVE_OAUTH_PENDING_MAX_AGE_MS = 5 * 60 * 1000;
 let nativeOAuthLifecycleInstalled = false;
 let nativeOAuthRecoveryRunning = false;
 let nativeOAuthFinalizeRunning = false;
-let nativeOAuthWaitResolver = null;
+let nativeOAuthWaiter = null;
 
 // Lista comuni servita LOCALMENTE (assets/data/comuni.json): niente più fetch da
 // CDN a runtime (fix audit C-13) → funziona offline e senza esporre l'IP a terzi.
@@ -639,8 +639,8 @@ function createSupabaseAdapter() {
     },
 
     async saveProfile(userId, payload) {
-      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       if (payload.avatarFile instanceof File && payload.avatarFile.size > 0) {
+        await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
         payload.avatar_url = await this.uploadPhoto(payload.avatarFile, "avatars");
       }
       try {
@@ -649,6 +649,7 @@ function createSupabaseAdapter() {
       } catch (directError) {
         console.warn("Salvataggio profilo via REST diretto non riuscito, provo client Supabase.", directError);
       }
+      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       // UPSERT (non update): il backend legge il profilo per chiave diretta,
       // strong-consistent. Evita il bug per cui un profilo appena creato (login
       // social) non viene trovato dalla list eventually-consistent e l'update
@@ -2130,10 +2131,13 @@ function closeNativeOAuthBrowser() {
   } catch (_) {}
 }
 
-function notifyNativeOAuthWaiter(value = NATIVE_OAUTH_SESSION_READY) {
-  const resolver = nativeOAuthWaitResolver;
-  nativeOAuthWaitResolver = null;
-  try { resolver?.(value); } catch (_) {}
+function notifyNativeOAuthWaiter(value = NATIVE_OAUTH_SESSION_READY, error = null) {
+  const waiter = nativeOAuthWaiter;
+  nativeOAuthWaiter = null;
+  try {
+    if (error) waiter?.reject?.(error);
+    else waiter?.resolve?.(value);
+  } catch (_) {}
 }
 
 function installNativeOAuthLifecycleHandlers() {
@@ -2147,6 +2151,8 @@ function installNativeOAuthLifecycleHandlers() {
     rememberNativeOAuthPending("google");
     completeNativeOAuthFromUrl(url, source).catch(error => {
       console.error("Redirect OAuth nativo non finalizzato", error);
+      clearNativeOAuthPending();
+      notifyNativeOAuthWaiter(null, error);
       toast(niceBackendError(error, "Accesso Google non completato."), "error");
     });
   };
@@ -2177,12 +2183,11 @@ function installNativeOAuthLifecycleHandlers() {
   }
 }
 
-// Scambio del code OAuth DEDUPLICATO. appUrlOpen scatta SIA per il listener
-// globale SIA per quello del button-flow (stesso `code`): senza dedup partivano
-// DUE exchangeCodeForSession con lo stesso code monouso, e i due scambi
-// serializzati dal lock si incastravano lasciando la chiamata appesa (la UI
-// restava sulla login). Qui garantiamo UN SOLO scambio per code, condiviso.
+// Scambio del code OAuth DEDUPLICATO. Il deep link può arrivare da più eventi
+// nativi (appUrlOpen, launchUrl, resume/recovery), ma il code PKCE è monouso:
+// qui garantiamo un solo exchange e una sola finalizzazione per ogni code.
 const nativeOAuthExchangeByCode = new Map();
+const nativeOAuthCompletionByCode = new Map();
 function exchangeNativeOAuthCode(code) {
   if (!code) return supabase.auth.exchangeCodeForSession(code);
   if (!nativeOAuthExchangeByCode.has(code)) {
@@ -2192,24 +2197,32 @@ function exchangeNativeOAuthCode(code) {
   return nativeOAuthExchangeByCode.get(code);
 }
 
+async function completeNativeOAuthCode(code, source = "appUrlOpen") {
+  if (!code) return recoverNativeOAuthSession(`${source}:no-code`, { allowWithoutPending: true });
+  if (!nativeOAuthCompletionByCode.has(code)) {
+    const completion = (async () => {
+      const { data, error } = await exchangeNativeOAuthCode(code);
+      if (error) {
+        const recovered = await recoverNativeOAuthSession(`${source}:exchange-fallback`, { allowWithoutPending: true });
+        if (recovered) return true;
+        throw new Error(error.message || "Scambio del codice Google non riuscito.");
+      }
+      if (data?.session) syncSessionState(data.session);
+      await finalizeNativeOAuthSession({ session: data?.session || state.session, source });
+      return true;
+    })();
+    nativeOAuthCompletionByCode.set(code, completion);
+    setTimeout(() => nativeOAuthCompletionByCode.delete(code), 120000);
+  }
+  return nativeOAuthCompletionByCode.get(code);
+}
+
 async function completeNativeOAuthFromUrl(url, source = "appUrlOpen") {
   const parsed = parseNativeOAuthCallbackUrl(url);
   if (!parsed) return false;
   if (parsed.error) throw new Error(parsed.error);
 
-  if (!parsed.code) {
-    return recoverNativeOAuthSession(`${source}:no-code`, { allowWithoutPending: true });
-  }
-
-  const { data, error } = await exchangeNativeOAuthCode(parsed.code);
-  if (error) {
-    const recovered = await recoverNativeOAuthSession(`${source}:exchange-fallback`, { allowWithoutPending: true });
-    if (recovered) return true;
-    throw new Error(error.message || "Scambio del codice Google non riuscito.");
-  }
-  if (data?.session) syncSessionState(data.session);
-  await finalizeNativeOAuthSession({ session: data?.session || state.session, source });
-  return true;
+  return completeNativeOAuthCode(parsed.code, source);
 }
 
 async function finalizeNativeOAuthSession({ session = null, source = "native-oauth" } = {}) {
@@ -2264,11 +2277,7 @@ async function recoverNativeOAuthSession(source = "recovery", options = {}) {
       if (isNativeOAuthCallbackUrl(launch?.url)) {
         const parsed = parseNativeOAuthCallbackUrl(launch.url);
         if (parsed?.code) {
-          const { data, error } = await exchangeNativeOAuthCode(parsed.code);
-          if (!error && data?.session) {
-            await finalizeNativeOAuthSession({ session: data.session, source: `${source}:launchUrl` });
-            return true;
-          }
+          return completeNativeOAuthCode(parsed.code, `${source}:launchUrl`);
         }
       }
     }
@@ -2308,45 +2317,44 @@ async function handleGoogleSignInNative() {
       }
     }
   });
-  if (error) throw new Error(error.message || "Avvio login Google non riuscito.");
-  if (!data?.url) throw new Error("URL di autenticazione Google non disponibile.");
+  if (error) {
+    clearNativeOAuthPending();
+    throw new Error(error.message || "Avvio login Google non riuscito.");
+  }
+  if (!data?.url) {
+    clearNativeOAuthPending();
+    throw new Error("URL di autenticazione Google non disponibile.");
+  }
 
-  let code = "";
   try {
-    code = await openSystemBrowserAndAwaitCode(data.url, NATIVE_OAUTH_REDIRECT);
+    await openNativeOAuthBrowserAndAwaitCompletion(data.url);
   } catch (waitError) {
     const recovered = await recoverNativeOAuthSession("wait-fallback", { allowWithoutPending: true });
     if (recovered) return;
+    clearNativeOAuthPending();
     throw waitError;
   }
-  if (code === NATIVE_OAUTH_SESSION_READY) return;
-
-  const { data: exchangeData, error: exchangeError } = await exchangeNativeOAuthCode(code);
-  if (exchangeError) {
-    const recovered = await recoverNativeOAuthSession("exchange-fallback", { allowWithoutPending: true });
-    if (recovered) return;
-    throw new Error(exchangeError.message || "Scambio del codice Google non riuscito.");
-  }
-  if (exchangeData?.session) syncSessionState(exchangeData.session);
-  await finalizeNativeOAuthSession({ session: exchangeData?.session || state.session, source: "button-flow" });
 }
 
-// Apre l'URL OAuth nel browser di sistema e risolve con il `code` presente nel
-// redirect di ritorno (catturato via @capacitor/app appUrlOpen).
-function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
+// Apre l'URL OAuth e lascia che SOLO il listener globale `appUrlOpen` consumi il
+// deep link. Il bottone aspetta soltanto la finalizzazione, evitando doppi
+// exchange dello stesso code PKCE.
+function openNativeOAuthBrowserAndAwaitCompletion(authUrl) {
   return new Promise((resolve, reject) => {
-    const AppPlugin = window.Capacitor?.Plugins?.App;
     const BrowserPlugin = window.Capacitor?.Plugins?.Browser;
-    if (!AppPlugin?.addListener) {
+    if (!window.Capacitor?.Plugins?.App?.addListener) {
       reject(new Error("Plugin Capacitor App non disponibile per il login nativo."));
       return;
     }
     let settled = false;
-    let handle = null;
     let browserFinishedHandle = null;
     let cleanupDone = false;
     const timer = setTimeout(() => finish(new Error("Tempo scaduto per il login Google.")), 180000);
-    nativeOAuthWaitResolver = (value) => finish(null, value);
+    nativeOAuthWaiter = {
+      resolve: (value) => finish(null, value),
+      reject: (error) => finish(error instanceof Error ? error : new Error(String(error || "Login Google non completato.")))
+    };
+    const waiter = nativeOAuthWaiter;
     function closeBrowser() {
       try {
         const result = BrowserPlugin?.close?.();
@@ -2356,9 +2364,8 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
     function cleanup() {
       cleanupDone = true;
       clearTimeout(timer);
-      try { handle?.remove?.(); } catch (_) {}
       try { browserFinishedHandle?.remove?.(); } catch (_) {}
-      if (nativeOAuthWaitResolver) nativeOAuthWaitResolver = null;
+      if (nativeOAuthWaiter === waiter) nativeOAuthWaiter = null;
       closeBrowser();
     }
     function finish(err, code) {
@@ -2368,48 +2375,29 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
       if (err) reject(err); else resolve(code);
     }
 
-    const listenerHandle = AppPlugin.addListener("appUrlOpen", (event) => {
-      const incoming = event?.url || "";
-      // Confronto sul solo scheme (it.civicvois.app://) per robustezza verso
-      // eventuali normalizzazioni di host/slash fatte da iOS/Android.
-      const schemePrefix = redirectScheme.split("://")[0] + "://";
-      if (settled || !incoming.startsWith(schemePrefix)) return;
-      const qIndex = incoming.indexOf("?");
-      const hIndex = incoming.indexOf("#");
-      const query = qIndex >= 0 ? incoming.slice(qIndex + 1).split("#")[0] : "";
-      const frag = hIndex >= 0 ? incoming.slice(hIndex + 1) : "";
-      const params = new URLSearchParams(query);
-      const hashParams = new URLSearchParams(frag);
-      const errDesc = params.get("error_description") || params.get("error")
-        || hashParams.get("error_description") || hashParams.get("error");
-      if (errDesc) { finish(new Error(decodeURIComponent(errDesc))); return; }
-      const code = params.get("code") || hashParams.get("code");
-      if (!code) { finish(new Error("Codice di autorizzazione Google mancante nel redirect.")); return; }
-      finish(null, code);
-    });
     if (BrowserPlugin?.addListener) {
       Promise.resolve(BrowserPlugin.addListener("browserFinished", async () => {
         const recovered = await recoverNativeOAuthSession("browserFinished", { allowWithoutPending: true }).catch(() => false);
         if (recovered) finish(null, NATIVE_OAUTH_SESSION_READY);
         else finish(new Error("Login Google annullato."));
-      })).then((h) => { browserFinishedHandle = h; }).catch(() => {});
+      })).then((h) => {
+        if (cleanupDone) {
+          try { h?.remove?.(); } catch (_) {}
+          return;
+        }
+        browserFinishedHandle = h;
+      }).catch(() => {});
     }
-    // @capacitor/app su iOS nativo restituisce la handle direttamente (NON una
-    // Promise): Promise.resolve() normalizza entrambi i casi ed evita il crash
-    // ".then is undefined".
-    Promise.resolve(listenerHandle).then((h) => {
-      handle = h;
+    Promise.resolve().then(() => {
       if (cleanupDone) {
-        try { handle?.remove?.(); } catch (_) {}
         return null;
       }
-      // Apriamo il browser solo dopo che il listener è pronto.
       if (BrowserPlugin?.open) {
         return BrowserPlugin.open({ url: authUrl, presentationStyle: "fullscreen" });
       }
       try { window.open(authUrl, "_system"); }
       catch (_) { window.location.href = authUrl; }
-    }).catch((e) => finish(e instanceof Error ? e : new Error("Listener deep link non registrato.")));
+    }).catch((e) => finish(e instanceof Error ? e : new Error("Browser OAuth non aperto.")));
   });
 }
 

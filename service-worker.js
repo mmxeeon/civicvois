@@ -1,4 +1,4 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v13-google-oauth-clean";
+const CIVICVOIS_CACHE = "civicvois-pwa-v14-native-google-single-consumer";
 const APP_SHELL = [
   "/",
   "/index.html",
