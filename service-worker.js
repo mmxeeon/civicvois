@@ -1,4 +1,4 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v15-report-create-optional-fields";
+const CIVICVOIS_CACHE = "civicvois-pwa-v16-feed-rest-direct";
 const APP_SHELL = [
   "/",
   "/index.html",

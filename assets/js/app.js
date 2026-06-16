@@ -241,6 +241,32 @@ async function supabaseRestJson(path, { method = "GET", body = null, prefer = ""
   return response.json();
 }
 
+// Lettura via REST diretto. A differenza di supabaseRestJson NON richiede il
+// token: le letture sono pubbliche (RLS USING true), quindi funzionano anche da
+// anonimo con la sola apikey; se c'è un JWT lo usiamo. Evita supabase.from()
+// .select(), che passa dal lock auth di supabase-js e da loggato si appendeva
+// (dashboard ferma sugli skeleton). Restituisce dati + l'header Content-Range
+// (per il conteggio totale con Prefer: count=exact).
+async function supabaseRestRead(path, { prefer = "", timeoutMs = 12000 } = {}) {
+  const token = currentAccessToken();
+  const headers = { apikey: SUPABASE_ANON_KEY, Accept: "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (prefer) headers.Prefer = prefer;
+  const response = await withTimeout(
+    fetch(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`, { method: "GET", headers }),
+    timeoutMs,
+    `REST GET ${path.split("?")[0]}`
+  );
+  if (!response.ok) {
+    let details = "";
+    try { details = await response.text(); } catch {}
+    throw new Error(details || `Lettura Supabase non riuscita (${response.status}).`);
+  }
+  const contentRange = response.headers.get("content-range") || "";
+  const data = response.status === 204 ? [] : await response.json();
+  return { data: Array.isArray(data) ? data : (data == null ? [] : [data]), contentRange };
+}
+
 async function restLoadProfile(userId) {
   const rows = await supabaseRestJson(`profiles?id=eq.${encodeURIComponent(userId)}&select=*`);
   return Array.isArray(rows) ? (rows[0] || null) : rows;
@@ -604,58 +630,87 @@ function createSupabaseAdapter() {
     },
 
     async fetchReportById(id) {
-      const { data, error } = await withRetry(() =>
-        supabase
-          .from("segnalazioni")
-          .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at")
-          .eq("id", id)
-          .maybeSingle()
-      );
-      if (error || !data) return null;
-      let profiles = null;
-      if (data.user_id) {
-        const { data: p } = await supabase.from("profiles").select("id,username,full_name,avatar_url,comune,provincia").eq("id", data.user_id).maybeSingle();
-        profiles = p || null;
+      let report = null;
+      try {
+        const { data } = await supabaseRestRead(`segnalazioni?select=${REPORT_SELECT}&id=eq.${encodeURIComponent(id)}&limit=1`);
+        report = data[0] || null;
+      } catch (directError) {
+        console.warn("Lettura segnalazione via REST diretto non riuscita, provo client Supabase.", directError);
+        const { data, error } = await withRetry(() =>
+          supabase.from("segnalazioni").select(REPORT_SELECT).eq("id", id).maybeSingle()
+        );
+        if (error) return null;
+        report = data || null;
       }
-      return { ...data, profiles };
+      if (!report) return null;
+      let profiles = null;
+      if (report.user_id) {
+        try {
+          const { data: p } = await supabaseRestRead(`profiles?select=id,username,full_name,avatar_url,comune,provincia&id=eq.${encodeURIComponent(report.user_id)}&limit=1`);
+          profiles = p[0] || null;
+        } catch (_) { /* autore non disponibile: la segnalazione resta visibile */ }
+      }
+      return { ...report, profiles };
     },
 
     async fetchReports({ page = 0 } = {}) {
       const from = page * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
-      const { data: reports, error, count } = await withRetry(() =>
-        supabase
-          .from("segnalazioni")
-          .select("id,user_id,titolo,tipo,descrizione,priorita,stato,regione,provincia,comune,via,civico,lat,lng,photo_url,like_count,created_at,updated_at", { count: "exact" })
-          .order("created_at", { ascending: false })
-          .range(from, to)
-      );
-      if (error) throw error;
+      // Lettura via REST diretto: supabase.from().select() passa dal lock auth di
+      // supabase-js e da loggato si appendeva (dashboard ferma sugli skeleton).
+      let rows = [];
+      let total = 0;
+      try {
+        const { data, contentRange } = await supabaseRestRead(
+          `segnalazioni?select=${REPORT_SELECT}&order=created_at.desc&offset=${from}&limit=${PAGE_SIZE}`,
+          { prefer: "count=exact" }
+        );
+        rows = data;
+        const m = /\/(\d+)\s*$/.exec(contentRange);
+        total = m ? Number(m[1]) : rows.length;
+      } catch (directError) {
+        console.warn("Lettura segnalazioni via REST diretto non riuscita, provo client Supabase.", directError);
+        const { data: reports, error, count } = await withRetry(() =>
+          supabase
+            .from("segnalazioni")
+            .select(REPORT_SELECT, { count: "exact" })
+            .order("created_at", { ascending: false })
+            .range(from, to)
+        );
+        if (error) throw error;
+        rows = reports || [];
+        total = count || 0;
+      }
 
-      const rows = reports || [];
       const userIds = [...new Set(rows.map(r => r.user_id).filter(Boolean))];
       let profilesById = {};
-
       if (userIds.length) {
-        const { data: profiles, error: profileError } = await withRetry(() =>
-          supabase
-            .from("profiles")
-            .select("id,username,full_name,avatar_url,regione,provincia,comune,bio")
-            .in("id", userIds)
-        );
-        if (!profileError) {
+        try {
+          const { data: profiles } = await supabaseRestRead(
+            `profiles?select=id,username,full_name,avatar_url,regione,provincia,comune,bio&id=in.(${userIds.join(",")})`
+          );
           profilesById = Object.fromEntries((profiles || []).map(p => [p.id, p]));
+        } catch (profErr) {
+          console.warn("Lettura profili autori non riuscita (mostro le segnalazioni senza autore).", profErr);
         }
       }
 
       return {
         reports: rows.map(r => ({ ...r, profiles: profilesById[r.user_id] || null })),
-        total: count || 0
+        total
       };
     },
 
     async fetchLikes(userId) {
+      try {
+        const { data } = await supabaseRestRead(
+          `interazioni?select=segnalazione_id&utente_id=eq.${encodeURIComponent(userId)}`
+        );
+        return new Set((data || []).map(row => row.segnalazione_id));
+      } catch (directError) {
+        console.warn("Lettura like via REST diretto non riuscita.", directError);
+      }
       const { data, error } = await withRetry(() =>
         supabase.from("interazioni").select("segnalazione_id").eq("utente_id", userId)
       );
@@ -666,6 +721,14 @@ function createSupabaseAdapter() {
     // Tutte le segnalazioni dell'utente (non paginate): serve per statistiche
     // di profilo corrette, indipendenti dalla pagina/filtri della dashboard.
     async fetchUserReports(userId) {
+      try {
+        const { data } = await supabaseRestRead(
+          `segnalazioni?select=id,user_id,titolo,tipo,descrizione,stato,priorita,comune,provincia,via,civico,photo_url,like_count,created_at&user_id=eq.${encodeURIComponent(userId)}&order=created_at.desc`
+        );
+        return data || [];
+      } catch (directError) {
+        console.warn("Lettura segnalazioni utente via REST diretto non riuscita.", directError);
+      }
       const { data, error } = await withRetry(() =>
         supabase
           .from("segnalazioni")
