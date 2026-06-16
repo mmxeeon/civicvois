@@ -840,9 +840,34 @@ function setProfileLoading(error = null) {
   scheduleProfileLoadingDeadline();
 }
 
+// ── Cache locale del profilo (per-utente) ─────────────────────────────────
+// Persistiamo l'ultimo profilo reale di ogni utente in localStorage. A freddo
+// (app nativa riaperta, rete WebView non ancora pronta) lo mostriamo SUBITO
+// senza dipendere dalla fetch, poi aggiorniamo in background alla prima lettura
+// riuscita. Cosi' l'utente, dopo aver configurato il profilo UNA volta, non
+// rivede mai "Profilo non ancora disponibile" ne' deve reinserire i dati.
+const PROFILE_CACHE_PREFIX = "cv_profile:";
+
+function writeCachedProfile(profile) {
+  if (!profile?.id) return;
+  try { writeLocal(PROFILE_CACHE_PREFIX + profile.id, profile); } catch {}
+}
+
+function readCachedProfile(userId) {
+  if (!userId) return null;
+  const cached = readLocal(PROFILE_CACHE_PREFIX + userId, null);
+  return cached && cached.id === userId ? cached : null;
+}
+
+function clearCachedProfile(userId) {
+  if (!userId) return;
+  try { localStorage.removeItem(PROFILE_CACHE_PREFIX + userId); } catch {}
+}
+
 function setProfileResolved(profile) {
   clearProfileLoadingDeadline();
   state.profile = profile || null;
+  if (profile) writeCachedProfile(profile); // persiste per i cold-start successivi
   state.profileStatus = profile
     ? PROFILE_STATUS.READY
     : (state.user ? PROFILE_STATUS.MISSING : PROFILE_STATUS.IDLE);
@@ -899,6 +924,12 @@ async function readCurrentUserProfile(user, { timeoutMs = PROFILE_ATTEMPT_TIMEOU
     const profile = await withTimeout(loader(), timeoutMs, "profilo");
     return { profile: profile || null, checked: true, error: null };
   } catch (error) {
+    // Rete/token non pronti (tipico cold-start nativo): se abbiamo l'ultimo
+    // profilo salvato localmente lo usiamo, cosi' l'utente vede subito i suoi
+    // dati invece di "Profilo non ancora disponibile". Il refresh avverra' alla
+    // prima lettura riuscita (che aggiornera' di nuovo la cache).
+    const cached = readCachedProfile(user.id);
+    if (cached) return { profile: cached, checked: true, error: null, fromCache: true };
     return { profile: null, checked: false, error };
   }
 }
@@ -1057,9 +1088,14 @@ async function init() {
       // Profilo già caricato per lo STESSO utente: lo conserviamo come fallback
       // temporaneo durante TOKEN_REFRESHED. Se cambia utente, invece, lo azzeriamo
       // e blocchiamo le schermate private finché arriva il profilo reale.
+      // Seed immediato: profilo già in memoria per lo stesso utente, oppure
+      // l'ultimo profilo salvato in cache locale. Cosi' a freddo mostriamo SUBITO
+      // i dati reali (niente "Profilo non ancora disponibile"); la lettura di
+      // rete qui sotto poi conferma/aggiorna.
       const sameUserProfile = state.profile && state.profile.id === nextUser.id ? state.profile : null;
-      if (sameUserProfile) {
-        setProfileResolved(sameUserProfile);
+      const seedProfile = sameUserProfile || readCachedProfile(nextUser.id);
+      if (seedProfile) {
+        setProfileResolved(seedProfile);
       } else {
         state.profile = null;
         setProfileLoading();
@@ -1071,8 +1107,8 @@ async function init() {
       if (profileResult.checked) {
         if (profileResult.profile) setProfileResolved(profileResult.profile);
         else markProfileMissing();
-      } else if (sameUserProfile) {
-        setProfileResolved(sameUserProfile);
+      } else if (seedProfile) {
+        setProfileResolved(seedProfile);
       } else {
         setProfileError(profileResult.error);
       }
@@ -3221,8 +3257,10 @@ async function handleDeleteAccount() {
     trigger.disabled = true;
     trigger.textContent = "Eliminazione...";
   }
+  const deletedUserId = state.user?.id;
   try {
     await backend.deleteAccount();
+    clearCachedProfile(deletedUserId); // l'account non esiste più: niente cache stale
     clearAuthLocalHints();
     clearAuthState();
     toast("Account eliminato. Arrivederci!", "success");
