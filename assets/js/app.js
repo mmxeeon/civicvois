@@ -2136,6 +2136,36 @@ function notifyNativeOAuthWaiter(value = NATIVE_OAUTH_SESSION_READY) {
   try { resolver?.(value); } catch (_) {}
 }
 
+// ── Debug OAuth a schermo (diagnostica login Google nativo) ───────────────
+// Mostra in overlay ogni passo del flusso OAuth, così su device si vede DOVE si
+// ferma (es. se appUrlOpen non scatta). Rimovibile una volta risolto.
+function oauthDbg(step) {
+  try {
+    const log = JSON.parse(localStorage.getItem("cv_oauth_dbg") || "[]");
+    log.push(new Date().toTimeString().slice(0, 8) + " " + step);
+    while (log.length > 40) log.shift();
+    localStorage.setItem("cv_oauth_dbg", JSON.stringify(log));
+  } catch {}
+  try { console.log("[OAUTH]", step); } catch {}
+  try { renderOAuthDebugOverlay(); } catch {}
+}
+
+function renderOAuthDebugOverlay() {
+  if (typeof document === "undefined") return;
+  let log;
+  try { log = JSON.parse(localStorage.getItem("cv_oauth_dbg") || "[]"); } catch { log = []; }
+  if (!log.length) return;
+  let el = document.getElementById("oauth-dbg");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "oauth-dbg";
+    el.style.cssText = "position:fixed;left:0;right:0;bottom:0;max-height:46vh;overflow:auto;z-index:2147483647;background:rgba(2,6,17,0.96);color:#7fffd4;font:11px/1.4 ui-monospace,Menlo,monospace;padding:8px 10px;border-top:2px solid #14b8a6;white-space:pre-wrap;-webkit-user-select:text;user-select:text;";
+    el.addEventListener("dblclick", () => { try { localStorage.removeItem("cv_oauth_dbg"); } catch {} el.remove(); });
+    (document.body || document.documentElement).appendChild(el);
+  }
+  el.textContent = "🔎 OAuth debug (doppio-tap per chiudere)\n" + log.join("\n");
+}
+
 function installNativeOAuthLifecycleHandlers() {
   if (nativeOAuthLifecycleInstalled || !IS_NATIVE_APP || !supabase) return;
   const AppPlugin = window.Capacitor?.Plugins?.App;
@@ -2143,9 +2173,11 @@ function installNativeOAuthLifecycleHandlers() {
   nativeOAuthLifecycleInstalled = true;
 
   const onUrl = (url, source) => {
+    oauthDbg(`appUrlOpen[${source}]: ${url ? String(url).slice(0, 70) : "(vuoto)"} match=${isNativeOAuthCallbackUrl(url)}`);
     if (!isNativeOAuthCallbackUrl(url)) return;
     rememberNativeOAuthPending("google");
     completeNativeOAuthFromUrl(url, source).catch(error => {
+      oauthDbg(`completeFromUrl ERRORE: ${error?.message || error}`);
       console.error("Redirect OAuth nativo non finalizzato", error);
       toast(niceBackendError(error, "Accesso Google non completato."), "error");
     });
@@ -2177,6 +2209,24 @@ function installNativeOAuthLifecycleHandlers() {
   }
 }
 
+// Scambio del code OAuth DEDUPLICATO. appUrlOpen scatta SIA per il listener
+// globale SIA per quello del button-flow (stesso `code`): senza dedup partivano
+// DUE exchangeCodeForSession con lo stesso code monouso, e i due scambi
+// serializzati dal lock si incastravano lasciando la chiamata appesa (la UI
+// restava sulla login). Qui garantiamo UN SOLO scambio per code, condiviso.
+const nativeOAuthExchangeByCode = new Map();
+function exchangeNativeOAuthCode(code) {
+  if (!code) return supabase.auth.exchangeCodeForSession(code);
+  if (!nativeOAuthExchangeByCode.has(code)) {
+    oauthDbg("exchange: avvio scambio UNICO");
+    nativeOAuthExchangeByCode.set(code, supabase.auth.exchangeCodeForSession(code));
+    setTimeout(() => nativeOAuthExchangeByCode.delete(code), 120000);
+  } else {
+    oauthDbg("exchange: riuso scambio in corso (dedup)");
+  }
+  return nativeOAuthExchangeByCode.get(code);
+}
+
 async function completeNativeOAuthFromUrl(url, source = "appUrlOpen") {
   const parsed = parseNativeOAuthCallbackUrl(url);
   if (!parsed) return false;
@@ -2186,7 +2236,7 @@ async function completeNativeOAuthFromUrl(url, source = "appUrlOpen") {
     return recoverNativeOAuthSession(`${source}:no-code`, { allowWithoutPending: true });
   }
 
-  const { data, error } = await supabase.auth.exchangeCodeForSession(parsed.code);
+  const { data, error } = await exchangeNativeOAuthCode(parsed.code);
   if (error) {
     const recovered = await recoverNativeOAuthSession(`${source}:exchange-fallback`, { allowWithoutPending: true });
     if (recovered) return true;
@@ -2198,8 +2248,9 @@ async function completeNativeOAuthFromUrl(url, source = "appUrlOpen") {
 }
 
 async function finalizeNativeOAuthSession({ session = null, source = "native-oauth" } = {}) {
+  oauthDbg("finalize START (" + source + ")");
   if (!IS_NATIVE_APP || !supabase) return false;
-  if (nativeOAuthFinalizeRunning) return false;
+  if (nativeOAuthFinalizeRunning) { oauthDbg("finalize gia' in corso, esco"); return false; }
   nativeOAuthFinalizeRunning = true;
   try {
     let activeSession = session || state.session || readStoredSupabaseSession();
@@ -2208,7 +2259,7 @@ async function finalizeNativeOAuthSession({ session = null, source = "native-oau
       if (error) throw error;
       activeSession = data?.session || null;
     }
-    if (!activeSession?.user) return false;
+    if (!activeSession?.user) { oauthDbg("finalize: NESSUNA sessione/utente, esco"); return false; }
 
     syncSessionState(activeSession);
     const oauthUser = activeSession.user;
@@ -2225,6 +2276,7 @@ async function finalizeNativeOAuthSession({ session = null, source = "native-oau
       session: activeSession,
       profile: readCachedProfile(oauthUser.id)
     }, "google");
+    oauthDbg("finalize OK -> instradato a " + state.route);
 
     // Background: garantisci/aggiorna il profilo reale, poi ridisegna.
     backend.oauthFinalize({}, activeSession)
@@ -2249,7 +2301,7 @@ async function recoverNativeOAuthSession(source = "recovery", options = {}) {
       if (isNativeOAuthCallbackUrl(launch?.url)) {
         const parsed = parseNativeOAuthCallbackUrl(launch.url);
         if (parsed?.code) {
-          const { data, error } = await supabase.auth.exchangeCodeForSession(parsed.code);
+          const { data, error } = await exchangeNativeOAuthCode(parsed.code);
           if (!error && data?.session) {
             await finalizeNativeOAuthSession({ session: data.session, source: `${source}:launchUrl` });
             return true;
@@ -2279,8 +2331,11 @@ async function recoverNativeOAuthSession(source = "recovery", options = {}) {
 }
 
 async function handleGoogleSignInNative() {
+  try { localStorage.removeItem("cv_oauth_dbg"); } catch {}
+  oauthDbg("1. handleGoogleSignInNative START");
   if (!supabase) throw new Error("Backend non disponibile.");
   await assertSupabaseAuthReachable();
+  oauthDbg("2. auth reachable, chiedo authorize URL");
   rememberNativeOAuthPending("google");
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
@@ -2293,27 +2348,34 @@ async function handleGoogleSignInNative() {
       }
     }
   });
-  if (error) throw new Error(error.message || "Avvio login Google non riuscito.");
+  if (error) { oauthDbg("ERRORE signInWithOAuth: " + error.message); throw new Error(error.message || "Avvio login Google non riuscito."); }
   if (!data?.url) throw new Error("URL di autenticazione Google non disponibile.");
+  oauthDbg("3. authorize URL ottenuto, apro browser");
 
   let code = "";
   try {
     code = await openSystemBrowserAndAwaitCode(data.url, NATIVE_OAUTH_REDIRECT);
   } catch (waitError) {
+    oauthDbg("4b. await code FALLITO: " + (waitError?.message || waitError) + " -> recovery");
     const recovered = await recoverNativeOAuthSession("wait-fallback", { allowWithoutPending: true });
+    oauthDbg("4c. recovery wait-fallback = " + recovered);
     if (recovered) return;
     throw waitError;
   }
+  oauthDbg("4. await code OK: " + (code === NATIVE_OAUTH_SESSION_READY ? "SESSION_READY" : "code(" + String(code).length + ")"));
   if (code === NATIVE_OAUTH_SESSION_READY) return;
 
-  const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+  const { data: exchangeData, error: exchangeError } = await exchangeNativeOAuthCode(code);
   if (exchangeError) {
+    oauthDbg("5b. exchange ERRORE: " + exchangeError.message + " -> recovery");
     const recovered = await recoverNativeOAuthSession("exchange-fallback", { allowWithoutPending: true });
     if (recovered) return;
     throw new Error(exchangeError.message || "Scambio del codice Google non riuscito.");
   }
+  oauthDbg("5. exchange OK, user=" + (exchangeData?.session?.user?.id || "?").slice(0, 8));
   if (exchangeData?.session) syncSessionState(exchangeData.session);
   await finalizeNativeOAuthSession({ session: exchangeData?.session || state.session, source: "button-flow" });
+  oauthDbg("6. finalize chiamato (button-flow)");
 }
 
 // Apre l'URL OAuth nel browser di sistema e risolve con il `code` presente nel
@@ -2355,6 +2417,7 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
 
     const listenerHandle = AppPlugin.addListener("appUrlOpen", (event) => {
       const incoming = event?.url || "";
+      oauthDbg("appUrlOpen[button]: " + (incoming ? incoming.slice(0, 70) : "(vuoto)"));
       // Confronto sul solo scheme (it.civicvois.app://) per robustezza verso
       // eventuali normalizzazioni di host/slash fatte da iOS/Android.
       const schemePrefix = redirectScheme.split("://")[0] + "://";
@@ -2374,7 +2437,9 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
     });
     if (BrowserPlugin?.addListener) {
       Promise.resolve(BrowserPlugin.addListener("browserFinished", async () => {
+        oauthDbg("browserFinished (browser chiuso) -> provo recovery");
         const recovered = await recoverNativeOAuthSession("browserFinished", { allowWithoutPending: true }).catch(() => false);
+        oauthDbg("browserFinished recovery = " + recovered);
         if (recovered) finish(null, NATIVE_OAUTH_SESSION_READY);
         else finish(new Error("Login Google annullato."));
       })).then((h) => { browserFinishedHandle = h; }).catch(() => {});
