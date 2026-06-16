@@ -2211,23 +2211,26 @@ async function finalizeNativeOAuthSession({ session = null, source = "native-oau
     if (!activeSession?.user) return false;
 
     syncSessionState(activeSession);
-    try {
-      const { user, session: finalizedSession, profile } = await backend.oauthFinalize({}, activeSession);
-      await applyAuthedSession({ user, session: finalizedSession || activeSession, profile }, "google");
-    } catch (finalizeError) {
-      const fallbackUser = activeSession.user;
-      console.warn(`Sessione Google creata (${source}), profilo non finalizzato subito: passo al completamento profilo.`, finalizeError);
-      await applyAuthedSession({
-        user: fallbackUser,
-        session: activeSession,
-        profile: readCachedProfile(fallbackUser.id)
-      }, "google");
-    }
+    const oauthUser = activeSession.user;
 
+    // Sblocco IMMEDIATO: chiudiamo il browser e instradiamo l'utente subito,
+    // SENZA aspettare il profilo dal server (oauthFinalize/_ensureProfile può
+    // essere lento). La sessione esiste già: la UI deve uscire dalla pagina di
+    // login all'istante. Il profilo reale (o la sua creazione) avviene dopo.
     clearNativeOAuthPending();
     closeNativeOAuthBrowser();
     notifyNativeOAuthWaiter();
-    render();
+    await applyAuthedSession({
+      user: oauthUser,
+      session: activeSession,
+      profile: readCachedProfile(oauthUser.id)
+    }, "google");
+
+    // Background: garantisci/aggiorna il profilo reale, poi ridisegna.
+    backend.oauthFinalize({}, activeSession)
+      .then(result => { if (result?.profile) { setProfileResolved(result.profile); render(); } })
+      .catch(error => { console.warn(`Profilo Google non finalizzato subito (${source}); ritento in background.`, error); try { ensureProfileLoaded(); } catch (_) {} });
+
     return true;
   } finally {
     nativeOAuthFinalizeRunning = false;
