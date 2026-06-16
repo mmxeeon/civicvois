@@ -1,4 +1,4 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v9-ux-pages";
+const CIVICVOIS_CACHE = "civicvois-pwa-v10-authlock-fix";
 const APP_SHELL = [
   "/",
   "/index.html",
