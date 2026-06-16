@@ -358,14 +358,18 @@ function createSupabaseAdapter() {
     },
 
     async deleteAccount() {
+      // Pulizia storage best-effort E con timeout: su WebView nativa una
+      // remove può restare appesa; non deve MAI bloccare la cancellazione.
       try {
-        await this.deleteOwnStorageFiles(state.user?.id);
+        await withTimeout(this.deleteOwnStorageFiles(state.user?.id), 8000, "pulizia storage");
       } catch (error) {
-        console.warn("Pulizia storage prima della cancellazione account non completata.", error);
+        console.warn("Pulizia storage prima della cancellazione account saltata (timeout o errore).", error);
       }
-      await supabase.deleteAccount();   // cancella profilo + segnalazioni + like lato server
+      // RPC con timeout: se la richiesta resta appesa (rete/WebView), non lasciamo
+      // il bottone su "Eliminazione..." all'infinito — l'utente vede un errore e riprova.
+      await withTimeout(supabase.deleteAccount(), 20000, "eliminazione account");
       try {
-        await supabase.auth.signOut({ scope: "local" }); // sessione locale: best-effort dopo delete auth.users
+        await withTimeout(supabase.auth.signOut({ scope: "local" }), 5000, "logout"); // best-effort dopo delete auth.users
       } catch (error) {
         console.warn("Sessione locale non ripulita automaticamente dopo la cancellazione account.", error);
       }
@@ -515,19 +519,25 @@ function createSupabaseAdapter() {
       // strong-consistent. Evita il bug per cui un profilo appena creato (login
       // social) non viene trovato dalla list eventually-consistent e l'update
       // fallisce silenziosamente.
-      const { data, error } = await supabase
-        .from("profiles")
-        .upsert({
-          id: userId,
-          full_name: payload.full_name,
-          username: payload.username,
-          bio: payload.bio,
-          regione: payload.regione,
-          provincia: payload.provincia,
-          comune: payload.comune,
-          avatar_url: payload.avatar_url,
-          updated_at: new Date().toISOString()
-        }, { onConflict: "id" });
+      // Timeout: il salvataggio non deve mai restare appeso (su WebView nativa
+      // una scrittura può non tornare); meglio un errore "riprova" che un blocco.
+      const { data, error } = await withTimeout(
+        supabase
+          .from("profiles")
+          .upsert({
+            id: userId,
+            full_name: payload.full_name,
+            username: payload.username,
+            bio: payload.bio,
+            regione: payload.regione,
+            provincia: payload.provincia,
+            comune: payload.comune,
+            avatar_url: payload.avatar_url,
+            updated_at: new Date().toISOString()
+          }, { onConflict: "id" }),
+        15000,
+        "salvataggio profilo"
+      );
       if (error) throw error;
       const saved = Array.isArray(data) ? data[0] : data;
       return saved || this._loadProfile(userId);
