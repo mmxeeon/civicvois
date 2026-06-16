@@ -198,6 +198,72 @@ function uniqueOwnStoragePaths(urls, bucket, userId) {
   )];
 }
 
+function currentAccessToken() {
+  return state.session?.access_token || readStoredSupabaseSession()?.access_token || "";
+}
+
+async function supabaseRestJson(path, { method = "GET", body = null, prefer = "" } = {}) {
+  const token = currentAccessToken();
+  if (!token) throw new Error("Sessione account non disponibile.");
+  const headers = {
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${token}`,
+    Accept: "application/json"
+  };
+  if (body !== null) headers["Content-Type"] = "application/json";
+  if (prefer) headers.Prefer = prefer;
+
+  const response = await withTimeout(
+    fetch(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${path}`, {
+      method,
+      headers,
+      body: body === null ? undefined : JSON.stringify(body)
+    }),
+    12000,
+    `REST ${method} ${path.split("?")[0]}`
+  );
+
+  if (!response.ok) {
+    let details = "";
+    try { details = await response.text(); } catch {}
+    throw new Error(details || `Richiesta Supabase non riuscita (${response.status}).`);
+  }
+  if (response.status === 204) return null;
+  return response.json();
+}
+
+async function restLoadProfile(userId) {
+  const rows = await supabaseRestJson(`profiles?id=eq.${encodeURIComponent(userId)}&select=*`);
+  return Array.isArray(rows) ? (rows[0] || null) : rows;
+}
+
+async function restUpsertProfile(userId, payload) {
+  const row = {
+    id: userId,
+    full_name: payload.full_name,
+    username: payload.username,
+    bio: payload.bio,
+    regione: payload.regione,
+    provincia: payload.provincia,
+    comune: payload.comune,
+    avatar_url: payload.avatar_url,
+    updated_at: new Date().toISOString()
+  };
+  const rows = await supabaseRestJson("profiles?on_conflict=id&select=*", {
+    method: "POST",
+    body: row,
+    prefer: "resolution=merge-duplicates,return=representation"
+  });
+  return Array.isArray(rows) ? (rows[0] || null) : rows;
+}
+
+async function restRpc(functionName, body = {}) {
+  return supabaseRestJson(`rpc/${encodeURIComponent(functionName)}`, {
+    method: "POST",
+    body
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  ADAPTER BACKEND
 //  Interfaccia uniforme: backend.login(), backend.register(), ecc.
@@ -345,16 +411,20 @@ function createSupabaseAdapter() {
       return { user: data.user, session: data.session, profile };
     },
 
-    async oauthFinalize(profileHint = {}) {
+    async oauthFinalize(profileHint = {}, knownSession = null) {
       // Path nativo (Supabase OAuth + deep link): la sessione è già stata creata
       // da exchangeCodeForSession. Recuperiamo l'utente corrente e garantiamo il
       // profilo (gli account social nascono senza comune/provincia).
-      const { data, error } = await supabase.auth.getSession();
-      if (error) throw new Error(niceBackendError(error, "Sessione Google non recuperata."));
-      const session = data?.session || null;
+      let session = knownSession || state.session || readStoredSupabaseSession();
+      if (!session) {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw new Error(niceBackendError(error, "Sessione Google non recuperata."));
+        session = data?.session || null;
+      }
       const user = session?.user;
       if (!user) throw new Error("Sessione Google non disponibile dopo il login.");
-      const profile = await this._ensureProfile(user, profileHint || {});
+      syncSessionState(session);
+      const profile = await withTimeout(this._ensureProfile(user, profileHint || {}), 12000, "profilo Google");
       return { user, session, profile };
     },
 
@@ -374,7 +444,12 @@ function createSupabaseAdapter() {
     },
 
     async logout() {
-      await supabase.auth.signOut();
+      try {
+        await withTimeout(supabase.auth.signOut({ scope: "local" }), 6000, "logout");
+      } catch (error) {
+        console.warn("Logout Supabase locale non riuscito nei tempi, pulisco lo storage manualmente.", error);
+        clearStoredSupabaseSession();
+      }
     },
 
     async deleteAccount() {
@@ -391,7 +466,12 @@ function createSupabaseAdapter() {
       }
       // RPC con timeout: se la richiesta resta appesa (rete/WebView), non lasciamo
       // il bottone su "Eliminazione..." all'infinito — l'utente vede un errore e riprova.
-      await withTimeout(withRetry(() => supabase.deleteAccount(), 2), 20000, "eliminazione account");
+      try {
+        await withTimeout(restRpc("delete_my_account"), 15000, "eliminazione account");
+      } catch (directError) {
+        console.warn("Eliminazione account via REST diretto non riuscita, provo client Supabase.", directError);
+        await withTimeout(withRetry(() => supabase.deleteAccount(), 2), 20000, "eliminazione account");
+      }
       try {
         await withTimeout(supabase.auth.signOut({ scope: "local" }), 5000, "logout"); // best-effort dopo delete auth.users
       } catch (error) {
@@ -401,7 +481,7 @@ function createSupabaseAdapter() {
 
     async deleteOwnStorageFiles(userId = state.user?.id) {
       if (!userId) return;
-      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
+      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       const { data: reports, error: reportsError } = await withRetry(() =>
         supabase
           .from("segnalazioni")
@@ -444,9 +524,13 @@ function createSupabaseAdapter() {
     },
 
     async restoreSession() {
-      const { data, error } = await supabase.auth.getSession();
-      if (error || !data?.session) return null;
-      const session = await ensureFreshAuthSession({ session: data.session, refreshWindowMs: 120000 }).catch(() => data.session);
+      let initialSession = state.session || readStoredSupabaseSession();
+      if (!initialSession) {
+        const { data, error } = await supabase.auth.getSession();
+        if (error || !data?.session) return null;
+        initialSession = data.session;
+      }
+      const session = await ensureFreshAuthSession({ session: initialSession, refreshWindowMs: 120000 }).catch(() => initialSession);
       const verified = await withTimeout(supabase.auth.getUser(), 8000, "verifica utente").catch((verifyError) => {
         if (isAuthTokenError(verifyError)) throw verifyError;
         console.warn("Verifica utente non riuscita durante il ripristino sessione.", verifyError);
@@ -546,9 +630,15 @@ function createSupabaseAdapter() {
     },
 
     async saveProfile(userId, payload) {
-      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
+      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       if (payload.avatarFile instanceof File && payload.avatarFile.size > 0) {
         payload.avatar_url = await this.uploadPhoto(payload.avatarFile, "avatars");
+      }
+      try {
+        const directSaved = await restUpsertProfile(userId, payload);
+        if (directSaved) return directSaved;
+      } catch (directError) {
+        console.warn("Salvataggio profilo via REST diretto non riuscito, provo client Supabase.", directError);
       }
       // UPSERT (non update): il backend legge il profilo per chiave diretta,
       // strong-consistent. Evita il bug per cui un profilo appena creato (login
@@ -583,7 +673,7 @@ function createSupabaseAdapter() {
     },
 
     async createReport(payload) {
-      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
+      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       if (payload.photoFile instanceof File && payload.photoFile.size > 0) {
         payload.photo_url = await this.uploadPhoto(payload.photoFile, "report-photos");
       }
@@ -630,7 +720,7 @@ function createSupabaseAdapter() {
     },
 
     async uploadPhoto(file, bucket) {
-      await ensureFreshAuthSession({ refreshWindowMs: 120000 });
+      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
       if (!SUPPORTED_IMAGE_TYPES.includes(file.type)) throw new Error("Formato immagine non supportato.");
       if (file.size > MAX_IMAGE_SIZE_BYTES) throw new Error("Immagine troppo grande. Limite: 5 MB.");
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
@@ -652,6 +742,11 @@ function createSupabaseAdapter() {
     // ── Metodi interni ──────────────────────────────────────────────────────
 
     async _loadProfile(userId) {
+      try {
+        return await restLoadProfile(userId);
+      } catch (directError) {
+        console.warn("Lettura profilo via REST diretto non riuscita, provo client Supabase.", directError);
+      }
       const { data, error } = await withRetry(() =>
         supabase.from("profiles").select("*").eq("id", userId).maybeSingle()
       );
@@ -660,7 +755,7 @@ function createSupabaseAdapter() {
     },
 
     async _ensureProfile(user, extra = {}) {
-      await ensureFreshAuthSession({ refreshWindowMs: 120000 }).catch(() => undefined);
+      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 }).catch(() => undefined);
       // Se il profilo esiste già, anche incompleto, NON lo sovrascriviamo con
       // metadata del login che possono essere parziali a cold-start. I campi
       // mancanti vanno completati dalla UI dedicata, non ricreati con fallback.
@@ -936,7 +1031,9 @@ async function readCurrentUserProfile(user, { timeoutMs = PROFILE_ATTEMPT_TIMEOU
 
 function hasRealAuthSession() {
   if (DEMO_MODE) return Boolean(state.user?.id);
-  return Boolean(state.user?.id && state.session?.access_token);
+  const stored = readStoredSupabaseSession();
+  if (!state.session && stored?.user?.id === state.user?.id) syncSessionState(stored);
+  return Boolean(state.user?.id && (state.session?.access_token || stored?.access_token));
 }
 
 function clearAuthLocalHints() {
@@ -1034,6 +1131,45 @@ function syncSessionState(session) {
   return session;
 }
 
+function supabaseProjectRef() {
+  try {
+    return new URL(SUPABASE_URL).hostname.split(".")[0] || "";
+  } catch {
+    return "";
+  }
+}
+
+function supabaseAuthStorageKey() {
+  const ref = supabaseProjectRef();
+  return ref ? `sb-${ref}-auth-token` : "";
+}
+
+function readStoredSupabaseSession() {
+  const key = supabaseAuthStorageKey();
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const session = parsed?.currentSession || parsed?.session || parsed;
+    return session?.access_token && session?.user ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearStoredSupabaseSession() {
+  const ref = supabaseProjectRef();
+  if (!ref) return;
+  try {
+    Object.keys(localStorage)
+      .filter(key => key === `sb-${ref}-auth-token` || key.startsWith(`sb-${ref}-auth-token`))
+      .forEach(key => localStorage.removeItem(key));
+  } catch {
+    // logout/delete devono comunque proseguire anche se lo storage non risponde
+  }
+}
+
 function shouldRefreshSession(session, refreshWindowMs = 90000) {
   const expiresAt = Number(session?.expires_at || 0) * 1000;
   if (!expiresAt) return false;
@@ -1043,7 +1179,7 @@ function shouldRefreshSession(session, refreshWindowMs = 90000) {
 async function ensureFreshAuthSession({ force = false, session = null, refreshWindowMs = 90000 } = {}) {
   if (!supabase?.auth) return null;
 
-  let current = session;
+  let current = session || state.session || readStoredSupabaseSession();
   if (!current) {
     const { data, error } = await withTimeout(supabase.auth.getSession(), 8000, "lettura sessione");
     if (error) throw error;
@@ -1815,8 +1951,8 @@ async function handleCompleteProfile(formData) {
     });
     state.filtersInitialized = false; // i filtri dashboard si reimpostano dalla nuova zona
     toast("Profilo completato. Benvenuto in CivicVois!", "success");
-    await refreshData();
     setRoute("dashboard");
+    refreshData().then(render).catch(error => console.warn("Dati post-completamento profilo non caricati subito", error));
   } catch (error) {
     console.error(error);
     toast(error.message || "Salvataggio non riuscito. Riprova.", "error");
@@ -1951,11 +2087,25 @@ async function handleGoogleSignInNative() {
   if (!data?.url) throw new Error("URL di autenticazione Google non disponibile.");
 
   const code = await openSystemBrowserAndAwaitCode(data.url, NATIVE_OAUTH_REDIRECT);
-  const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+  const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
   if (exchangeError) throw new Error(exchangeError.message || "Scambio del codice Google non riuscito.");
+  if (exchangeData?.session) syncSessionState(exchangeData.session);
 
-  const { user, session, profile } = await backend.oauthFinalize();
-  await applyAuthedSession({ user, session, profile }, "google");
+  try {
+    const { user, session, profile } = await backend.oauthFinalize({}, exchangeData?.session || state.session);
+    await applyAuthedSession({ user, session, profile }, "google");
+  } catch (finalizeError) {
+    const fallbackSession = exchangeData?.session || state.session || readStoredSupabaseSession();
+    const fallbackUser = fallbackSession?.user;
+    if (!fallbackUser) throw finalizeError;
+    console.warn("Sessione Google creata, profilo non finalizzato subito: passo al completamento profilo.", finalizeError);
+    syncSessionState(fallbackSession);
+    await applyAuthedSession({
+      user: fallbackUser,
+      session: fallbackSession,
+      profile: readCachedProfile(fallbackUser.id)
+    }, "google");
+  }
 }
 
 // Apre l'URL OAuth nel browser di sistema e risolve con il `code` presente nel
@@ -2119,21 +2269,20 @@ async function applyAuthedSession({ user, session, profile }, provider) {
   state.session = session || null;
   if (profile) setProfileResolved(profile);
   else {
-    state.profile = null;
-    setProfileLoading();
+    markProfileMissing();
   }
-  await refreshData();
 
   // Gli account social nascono senza comune/provincia. Se il profilo è
   // incompleto, lo mandiamo alla pagina dedicata di completamento (il guard
   // centrale in render()/normalizeRoute lo terrebbe comunque lì).
-  if (profile && isProfileIncomplete(profile)) {
+  if (!profile || isProfileIncomplete(profile)) {
+    refreshData().then(render).catch(error => console.warn("Dati post-login social non caricati subito", error));
     setRoute("complete-profile");
     return;
   }
 
   toast("Accesso con " + provider + " effettuato.", "success");
-  if (!profile) ensureProfileLoaded();
+  refreshData().then(render).catch(error => console.warn("Dati post-login social non caricati subito", error));
   setRoute("dashboard");
 }
 
@@ -2212,13 +2361,12 @@ async function handleRegister(formData) {
 }
 
 async function handleLogout() {
-  try {
-    await backend.logout();
-  } catch { /* ignora */ }
   clearAuthLocalHints();
+  clearStoredSupabaseSession();
   clearAuthState();
   toast("Logout effettuato.", "success");
   setRoute("landing");
+  backend.logout().catch(error => console.warn("Logout remoto/local Supabase completato con errore dopo uscita UI.", error));
 }
 
 // ─── App layout ───────────────────────────────────────────────────────────────
@@ -3328,6 +3476,7 @@ async function handleDeleteAccount() {
     await backend.deleteAccount();
     clearCachedProfile(deletedUserId); // l'account non esiste più: niente cache stale
     clearAuthLocalHints();
+    clearStoredSupabaseSession();
     clearAuthState();
     toast("Account eliminato. Arrivederci!", "success");
     setRoute("landing");
