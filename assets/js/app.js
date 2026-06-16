@@ -777,6 +777,8 @@ async function init() {
       }
       await refreshData();
       render();
+      // Profilo non caricato ma sessione presente (cold-start nativo): ritenta.
+      if (state.user && !state.profile) ensureProfileLoaded();
     } catch (error) {
       console.error("Aggiornamento stato sessione non riuscito", error);
       render();
@@ -813,6 +815,41 @@ async function bootstrapAndLoad() {
   }
 
   await refreshData();
+
+  // Cold-start: se la sessione c'è ma il profilo non si è caricato (prima fetch
+  // fallita per 401 con token in rinnovo o rete WebView non ancora pronta),
+  // ritenta in background — altrimenti l'app resterebbe con "Utente CivicVois".
+  if (state.user && !state.profile) ensureProfileLoaded();
+}
+
+// Ricarica il profilo con backoff finché la sessione resta valida. Usa una
+// lettura pura (_loadProfile, niente upsert) per non rischiare di sovrascrivere
+// un profilo reale con dati vuoti durante i tentativi.
+let profileRetryRunning = false;
+async function ensureProfileLoaded() {
+  if (profileRetryRunning) return;
+  if (typeof backend._loadProfile !== "function") return;
+  profileRetryRunning = true;
+  try {
+    const delays = [400, 900, 1800, 3000, 5000, 8000];
+    for (const d of delays) {
+      if (!state.user || state.profile) break;
+      await wait(d);
+      if (!state.user || state.profile) break;
+      try {
+        const p = await backend._loadProfile(state.user.id);
+        if (p) {
+          state.profile = p;
+          render();
+          break;
+        }
+      } catch (_) {
+        // riprova al giro successivo
+      }
+    }
+  } finally {
+    profileRetryRunning = false;
+  }
 }
 
 function bindHashRouter() {
