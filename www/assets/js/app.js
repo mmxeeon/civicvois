@@ -40,6 +40,7 @@ const PROFILE_STATUS = {
 const PRIVATE_PROFILE_ROUTES = new Set(["new", "profile", "profile/edit", "admin", "complete-profile"]);
 const PROFILE_ATTEMPT_TIMEOUT_MS = 4500;
 const PROFILE_LOADING_GRACE_MS = 12000;
+const AUTH_CONNECTIVITY_TIMEOUT_MS = 7000;
 
 // Lista comuni servita LOCALMENTE (assets/data/comuni.json): niente più fetch da
 // CDN a runtime (fix audit C-13) → funziona offline e senza esporre l'IP a terzi.
@@ -957,6 +958,34 @@ function withTimeout(promise, ms, label = "operazione") {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+async function assertSupabaseAuthReachable() {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    throw new Error("Connessione internet assente. Attiva Wi-Fi o dati mobili e riprova.");
+  }
+  if (typeof fetch !== "function") return;
+  const authHealthUrl = `${SUPABASE_URL.replace(/\/$/, "")}/auth/v1/health`;
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const request = fetch(authHealthUrl, {
+    method: "GET",
+    cache: "no-store",
+    headers: { apikey: SUPABASE_ANON_KEY },
+    signal: controller?.signal
+  });
+  try {
+    const response = await withTimeout(request, AUTH_CONNECTIVITY_TIMEOUT_MS, "verifica connessione Supabase")
+      .catch((error) => {
+        try { controller?.abort?.(); } catch (_) {}
+        throw error;
+      });
+    if (!response.ok) {
+      throw new Error(`Supabase Auth non raggiungibile (${response.status}).`);
+    }
+  } catch (error) {
+    console.warn("Supabase auth connectivity check failed", error);
+    throw new Error("Connessione internet assente o Supabase non raggiungibile. Controlla Wi-Fi/dati e riprova.");
+  }
+}
+
 function isAuthTokenError(error) {
   const status = Number(error?.status || error?.code || 0);
   const message = String(error?.message || error?.error_description || error || "").toLowerCase();
@@ -1808,6 +1837,7 @@ const NATIVE_OAUTH_REDIRECT = "it.civicvois.app://login-callback";
 
 async function handleGoogleSignInNative() {
   if (!supabase) throw new Error("Backend non disponibile.");
+  await assertSupabaseAuthReachable();
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
@@ -1842,6 +1872,8 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
     }
     let settled = false;
     let handle = null;
+    let browserFinishedHandle = null;
+    let cleanupDone = false;
     const timer = setTimeout(() => finish(new Error("Tempo scaduto per il login Google.")), 180000);
     function closeBrowser() {
       try {
@@ -1850,8 +1882,10 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
       } catch (_) {}
     }
     function cleanup() {
+      cleanupDone = true;
       clearTimeout(timer);
       try { handle?.remove?.(); } catch (_) {}
+      try { browserFinishedHandle?.remove?.(); } catch (_) {}
       closeBrowser();
     }
     function finish(err, code) {
@@ -1880,11 +1914,20 @@ function openSystemBrowserAndAwaitCode(authUrl, redirectScheme) {
       if (!code) { finish(new Error("Codice di autorizzazione Google mancante nel redirect.")); return; }
       finish(null, code);
     });
+    if (BrowserPlugin?.addListener) {
+      Promise.resolve(BrowserPlugin.addListener("browserFinished", () => {
+        finish(new Error("Login Google annullato."));
+      })).then((h) => { browserFinishedHandle = h; }).catch(() => {});
+    }
     // @capacitor/app su iOS nativo restituisce la handle direttamente (NON una
     // Promise): Promise.resolve() normalizza entrambi i casi ed evita il crash
     // ".then is undefined".
     Promise.resolve(listenerHandle).then((h) => {
       handle = h;
+      if (cleanupDone) {
+        try { handle?.remove?.(); } catch (_) {}
+        return null;
+      }
       // Apriamo il browser solo dopo che il listener è pronto.
       if (BrowserPlugin?.open) {
         return BrowserPlugin.open({ url: authUrl, presentationStyle: "fullscreen" });
