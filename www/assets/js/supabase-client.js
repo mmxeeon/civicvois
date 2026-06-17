@@ -69,51 +69,10 @@ export function createSupabaseClient({ url, key }) {
     if (error) throw error;
   };
 
-  // Moderazione: stesse azioni del vecchio proxy, mappate su tabelle Supabase.
-  client.moderation = async (payload = {}) => {
-    const action = payload.action;
-
-    if (action === "report") {
-      const { error } = await client.from("content_reports").insert({
-        target_id: String(payload.targetId || ""),
-        reason: String(payload.reason || "")
-      });
-      if (error) throw error;
-      return { data: true };
-    }
-
-    if (action === "block") {
-      const { error } = await client.from("user_blocks").insert({ blocked_id: payload.targetUserId });
-      if (error) throw error;
-      return { data: true };
-    }
-
-    if (action === "list-blocks") {
-      const { data, error } = await client.from("user_blocks").select("blocked_id");
-      if (error) throw error;
-      return { data: (data || []).map(r => r.blocked_id) };
-    }
-
-    if (action === "list-reports") {
-      const { data, error } = await client
-        .from("content_reports")
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return { data: data || [] };
-    }
-
-    if (action === "resolve-report") {
-      const { error } = await client
-        .from("content_reports")
-        .update({ status: "resolved" })
-        .eq("id", payload.reportId);
-      if (error) throw error;
-      return { data: true };
-    }
-
-    throw new Error("Azione di moderazione non supportata: " + action);
-  };
+  // Nota: la moderazione (report/block/list/resolve) è ora gestita in app.js via
+  // REST diretto col JWT (helper supabaseRestJson/supabaseRestRead), per evitare
+  // che client.from() passi dal lock auth di supabase-js e resti appeso. Qui non
+  // esponiamo più client.moderation: era il vecchio percorso bloccante.
 
   return client;
 }

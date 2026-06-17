@@ -71,6 +71,14 @@ const FALLBACK_LOCATIONS = [
 ];
 
 const PAGE_SIZE = 10; // home privata: massimo 10 segnalazioni (mappa sempre visibile, niente scroll infinito)
+// Quante segnalazioni leggiamo dal server per alimentare i filtri lato client.
+// I filtri (regione/provincia/comune/categoria) lavorano in memoria su state.reports:
+// se caricassimo solo le 10 più recenti GLOBALI, un utente di un comune piccolo —
+// la cui dashboard è pre-filtrata sul suo comune — vedrebbe "Nessuna segnalazione"
+// pur avendone pubblicate (bug: la sua segnalazione non rientra tra le 10 globali).
+// Caricando una finestra più ampia e filtrando/affettando a PAGE_SIZE in memoria,
+// i filtri trovano le segnalazioni del comune restando robusti su accenti/maiuscole.
+const FEED_FETCH_LIMIT = 300;
 
 // ─── Helpers DOM ──────────────────────────────────────────────────────────────
 
@@ -345,6 +353,33 @@ async function restUploadPhoto(file, bucket) {
   return `${base}/storage/v1/object/public/${bucket}/${path}`;
 }
 
+// Cancellazione file storage via REST diretto col JWT (come l'upload): evita
+// supabase.storage.from().remove() che passa dal lock auth di supabase-js.
+async function restRemoveStorage(bucket, paths) {
+  if (!paths || !paths.length) return;
+  const token = currentAccessToken();
+  if (!token) throw new Error("Sessione account non disponibile.");
+  const base = SUPABASE_URL.replace(/\/$/, "");
+  const response = await withTimeout(
+    fetch(`${base}/storage/v1/object/${bucket}`, {
+      method: "DELETE",
+      headers: {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prefixes: paths })
+    }),
+    15000,
+    "pulizia storage"
+  );
+  if (!response.ok) {
+    let details = "";
+    try { details = await response.text(); } catch {}
+    throw new Error(details || `Pulizia storage non riuscita (${response.status}).`);
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  ADAPTER BACKEND
 //  Interfaccia uniforme: backend.login(), backend.register(), ecc.
@@ -562,46 +597,47 @@ function createSupabaseAdapter() {
 
     async deleteOwnStorageFiles(userId = state.user?.id) {
       if (!userId) return;
-      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
-      const { data: reports, error: reportsError } = await withRetry(() =>
-        supabase
-          .from("segnalazioni")
-          .select("photo_url")
-          .eq("user_id", userId)
+      // REST diretto: sia la lettura dei photo_url sia la remove passavano dal
+      // lock auth di supabase-js (potevano restare appese durante il delete).
+      const { data: reports } = await supabaseRestRead(
+        `segnalazioni?select=photo_url&user_id=eq.${encodeURIComponent(userId)}`
       );
-      if (reportsError) throw reportsError;
-
       const profile = state.profile?.id === userId ? state.profile : await this._loadProfile(userId).catch(() => null);
       const reportPaths = uniqueOwnStoragePaths((reports || []).map(r => r.photo_url), "report-photos", userId);
       const avatarPaths = uniqueOwnStoragePaths([profile?.avatar_url], "avatars", userId);
 
-      if (reportPaths.length) {
-        const { error } = await withRetry(() => supabase.storage.from("report-photos").remove(reportPaths), 2);
-        if (error) throw error;
-      }
-      if (avatarPaths.length) {
-        const { error } = await withRetry(() => supabase.storage.from("avatars").remove(avatarPaths), 2);
-        if (error) throw error;
-      }
+      await restRemoveStorage("report-photos", reportPaths);
+      await restRemoveStorage("avatars", avatarPaths);
     },
 
     // ── Moderazione contenuti ──────────────────────────────────────────────
+    // REST diretto col JWT: reporter_id/blocker_id hanno DEFAULT auth.uid() lato
+    // DB, quindi bastano i campi sotto. Evita supabase.from() (lock auth).
     async reportContent(targetId, reason = "") {
-      await supabase.moderation({ action: "report", targetId, reason });
+      await supabaseRestJson("content_reports", {
+        method: "POST",
+        body: { target_id: String(targetId || ""), reason: String(reason || "") }
+      });
     },
     async blockUser(targetUserId) {
-      await supabase.moderation({ action: "block", targetUserId });
+      await supabaseRestJson("user_blocks", {
+        method: "POST",
+        body: { blocked_id: targetUserId }
+      });
     },
     async fetchBlocks() {
-      const res = await supabase.moderation({ action: "list-blocks" });
-      return new Set(res?.data || []);
+      const { data } = await supabaseRestRead("user_blocks?select=blocked_id");
+      return new Set((data || []).map(r => r.blocked_id));
     },
     async fetchModerationReports() {
-      const res = await supabase.moderation({ action: "list-reports" });
-      return res?.data || [];
+      const { data } = await supabaseRestRead("content_reports?select=*&order=created_at.desc");
+      return data || [];
     },
     async resolveModerationReport(reportId) {
-      await supabase.moderation({ action: "resolve-report", reportId });
+      await supabaseRestJson(`content_reports?id=eq.${encodeURIComponent(reportId)}`, {
+        method: "PATCH",
+        body: { status: "resolved" }
+      });
     },
 
     async restoreSession() {
@@ -654,8 +690,10 @@ function createSupabaseAdapter() {
     },
 
     async fetchReports({ page = 0 } = {}) {
-      const from = page * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
+      // Finestra ampia (non solo PAGE_SIZE) così i filtri lato client trovano le
+      // segnalazioni del comune dell'utente: vedi nota su FEED_FETCH_LIMIT.
+      const from = page * FEED_FETCH_LIMIT;
+      const to = from + FEED_FETCH_LIMIT - 1;
 
       // Lettura via REST diretto: supabase.from().select() passa dal lock auth di
       // supabase-js e da loggato si appendeva (dashboard ferma sugli skeleton).
@@ -663,7 +701,7 @@ function createSupabaseAdapter() {
       let total = 0;
       try {
         const { data, contentRange } = await supabaseRestRead(
-          `segnalazioni?select=${REPORT_SELECT}&order=created_at.desc&offset=${from}&limit=${PAGE_SIZE}`,
+          `segnalazioni?select=${REPORT_SELECT}&order=created_at.desc&offset=${from}&limit=${FEED_FETCH_LIMIT}`,
           { prefer: "count=exact" }
         );
         rows = data;
@@ -752,42 +790,14 @@ function createSupabaseAdapter() {
         await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
         payload.avatar_url = await this.uploadPhoto(payload.avatarFile, "avatars");
       }
-      try {
-        const directSaved = await restUpsertProfile(userId, payload);
-        if (directSaved) return directSaved;
-      } catch (directError) {
-        console.warn("Salvataggio profilo via REST diretto non riuscito, provo client Supabase.", directError);
-      }
-      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 });
-      // UPSERT (non update): il backend legge il profilo per chiave diretta,
-      // strong-consistent. Evita il bug per cui un profilo appena creato (login
-      // social) non viene trovato dalla list eventually-consistent e l'update
-      // fallisce silenziosamente.
-      // Timeout: il salvataggio non deve mai restare appeso (su WebView nativa
-      // una scrittura può non tornare); meglio un errore "riprova" che un blocco.
-      const { data, error } = await withTimeout(
-        withRetry(() =>
-          supabase
-            .from("profiles")
-            .upsert({
-              id: userId,
-              full_name: payload.full_name,
-              username: payload.username,
-              bio: payload.bio,
-              regione: payload.regione,
-              provincia: payload.provincia,
-              comune: payload.comune,
-              avatar_url: payload.avatar_url,
-              updated_at: new Date().toISOString()
-            }, { onConflict: "id" })
-            .select("*")
-            .single(),
-        2),
+      // UPSERT via REST diretto col JWT (strong-consistent per chiave id): evita
+      // supabase.from().upsert (lock auth) che su WebView poteva restare appeso.
+      // Retry + timeout: meglio un errore "riprova" che un blocco infinito.
+      const saved = await withTimeout(
+        withRetry(() => restUpsertProfile(userId, payload), 2),
         15000,
         "salvataggio profilo"
       );
-      if (error) throw error;
-      const saved = Array.isArray(data) ? data[0] : data;
       return saved || this._loadProfile(userId);
     },
 
@@ -805,32 +815,33 @@ function createSupabaseAdapter() {
     },
 
     async deleteReport(id) {
-      const { error } = await supabase.from("segnalazioni").delete().eq("id", id);
-      if (error) throw error;
+      // REST diretto col JWT: supabase.from().delete() passa dal lock auth di
+      // supabase-js e da loggato si appendeva (eliminazione segnalazione muta).
+      await supabaseRestJson(`segnalazioni?id=eq.${encodeURIComponent(id)}`, { method: "DELETE" });
     },
 
     async toggleLike(userId, reportId, alreadyLiked) {
+      // REST diretto col JWT: era la causa delle "votazioni che non funzionano".
+      // supabase.from("interazioni").insert/delete restava appeso sul lock auth.
       if (alreadyLiked) {
-        const { error } = await supabase
-          .from("interazioni")
-          .delete()
-          .eq("utente_id", userId)
-          .eq("segnalazione_id", reportId);
-        if (error) throw error;
+        await supabaseRestJson(
+          `interazioni?utente_id=eq.${encodeURIComponent(userId)}&segnalazione_id=eq.${encodeURIComponent(reportId)}`,
+          { method: "DELETE" }
+        );
       } else {
-        const { error } = await supabase
-          .from("interazioni")
-          .insert({ utente_id: userId, segnalazione_id: reportId });
-        if (error) throw error;
+        await supabaseRestJson("interazioni", {
+          method: "POST",
+          body: { utente_id: userId, segnalazione_id: reportId }
+        });
       }
     },
 
     async updateReportAdmin(id, patch) {
-      const { error } = await supabase
-        .from("segnalazioni")
-        .update({ ...patch, updated_at: new Date().toISOString() })
-        .eq("id", id);
-      if (error) throw error;
+      // REST diretto col JWT al posto di supabase.from().update() (lock auth).
+      await supabaseRestJson(`segnalazioni?id=eq.${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { ...patch, updated_at: new Date().toISOString() }
+      });
     },
 
     async uploadPhoto(file, bucket) {
@@ -875,7 +886,6 @@ function createSupabaseAdapter() {
     },
 
     async _ensureProfile(user, extra = {}) {
-      await ensureFreshAuthSession({ session: state.session, refreshWindowMs: 120000 }).catch(() => undefined);
       // Se il profilo esiste già, anche incompleto, NON lo sovrascriviamo con
       // metadata del login che possono essere parziali a cold-start. I campi
       // mancanti vanno completati dalla UI dedicata, non ricreati con fallback.
@@ -887,7 +897,6 @@ function createSupabaseAdapter() {
       const fallbackUsername = cleanUsername(extra.username || metadata.username || emailName || `utente-${String(user.id).slice(0, 6)}`);
 
       const payload = {
-        id: user.id,
         username: fallbackUsername,
         full_name: clean(extra.full_name || metadata.full_name || fallbackUsername),
         regione: clean(extra.regione || metadata.regione || ""),
@@ -897,26 +906,18 @@ function createSupabaseAdapter() {
         avatar_url: clean(extra.avatar_url || metadata.avatar_url || "")
       };
 
-      const { data, error } = await withRetry(() => supabase
-        .from("profiles")
-        .upsert(payload, { onConflict: "id", ignoreDuplicates: false })
-        .select("*")
-        .single(), 2);
-
-      if (error && String(error.message || "").toLowerCase().includes("duplicate")) {
-        const altPayload = { ...payload, username: `${fallbackUsername}-${String(user.id).slice(0, 6)}` };
-        const { data: altData, error: altError } = await withRetry(() => supabase
-          .from("profiles")
-          .upsert(altPayload, { onConflict: "id", ignoreDuplicates: false })
-          .select("*")
-          .single(), 2);
-        if (altError) throw altError;
-        return altData || this._loadProfile(user.id);
-      } else if (error) {
-        throw error;
+      // Upsert via REST diretto col JWT (come saveProfile): supabase.from().upsert
+      // passa dal lock auth e sul percorso login/social poteva restare appeso.
+      try {
+        const saved = await restUpsertProfile(user.id, payload);
+        return saved || this._loadProfile(user.id);
+      } catch (directError) {
+        if (String(directError?.message || "").toLowerCase().includes("duplicate")) {
+          const altSaved = await restUpsertProfile(user.id, { ...payload, username: `${fallbackUsername}-${String(user.id).slice(0, 6)}` });
+          return altSaved || this._loadProfile(user.id);
+        }
+        throw directError;
       }
-
-      return data || this._loadProfile(user.id);
     }
   };
 }
@@ -986,6 +987,7 @@ const state = {
   pendingReports: [],   // segnalazioni appena create, in attesa che il server le elenchi
   myStats: null,        // statistiche reali dell'utente (tutte le sue segnalazioni)
   blocked: new Set(),   // id degli utenti bloccati (per nascondere i loro contenuti)
+  hiddenReports: new Set(readLocal("cv_hidden_reports_v1", []) || []), // segnalazioni che l'utente ha segnalato: le nascondiamo subito dalla sua vista
   reportsLoaded: false, // true dopo il primo caricamento del feed (per gli skeleton)
   filters: {
     q: "",            // usato solo dalla ricerca globale (header desktop)
@@ -1573,7 +1575,9 @@ function normalizeRoute(route) {
   }
   // Profilo già completo: non lasciare l'utente bloccato sulla pagina di completamento
   if (route === "complete-profile" && state.user && state.profile && !isProfileIncomplete(state.profile)) return "dashboard";
-  if (route === "admin" && state.user && !state.profile) return "admin";
+  // Admin: solo con ruolo confermato. Se il profilo non è ancora caricato
+  // (null/fetch in corso) NON ammettiamo al pannello — meglio un breve passaggio
+  // su dashboard che esporre la UI admin a un utente qualsiasi.
   if (route === "admin" && state.profile?.role !== "admin") return "dashboard";
   return route || "landing";
 }
@@ -4455,7 +4459,9 @@ function bindProfileTabs() {
 function bindProfileForm() {
   $("#profile-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    await updateProfile(new FormData(event.currentTarget));
+    // lockSubmit come gli altri form: un doppio tap su "Salva" non deve lanciare
+    // due saveProfile concorrenti (doppio upload avatar + race su avatar_url).
+    await lockSubmit(event.currentTarget, () => updateProfile(new FormData(event.currentTarget)));
   });
 }
 
@@ -4813,17 +4819,27 @@ function paintReportDetail(report) {
   });
   $(".rd-like")?.addEventListener("click", async () => {
     if (!state.user) return setRoute("auth");
+    // Stesso guard in-flight del like del feed (_likeInFlight condiviso): tap
+    // ripetuti veloci non devono lanciare più toggleLike con lo stesso "was"
+    // (insert/delete duplicati o errori RLS → voti doppi).
+    if (_likeInFlight.has(report.id)) return;
+    _likeInFlight.add(report.id);
     const was = state.likes.has(report.id);
     if (was) { state.likes.delete(report.id); report.like_count = Math.max(0, Number(report.like_count || 0) - 1); }
     else { state.likes.add(report.id); report.like_count = Number(report.like_count || 0) + 1; }
+    const cached = state.reports.find(r => r.id === report.id);
+    if (cached) cached.like_count = report.like_count;
     paintReportDetail(report);
     try {
       await backend.toggleLike(state.user.id, report.id, was);
     } catch (error) {
       if (was) { state.likes.add(report.id); report.like_count = Number(report.like_count || 0) + 1; }
       else { state.likes.delete(report.id); report.like_count = Math.max(0, Number(report.like_count || 0) - 1); }
+      if (cached) cached.like_count = report.like_count;
       paintReportDetail(report);
       toast("Like non aggiornato.", "error");
+    } finally {
+      _likeInFlight.delete(report.id);
     }
   });
 }
@@ -4929,7 +4945,16 @@ async function handleReportContent(reportId) {
   if (!ok) return;
   try {
     await backend.reportContent(reportId);
+    // Coerenza con "blocca utente": nascondiamo subito il contenuto segnalato
+    // dalla vista di chi lo segnala (e lo ricordiamo tra le sessioni).
+    state.hiddenReports.add(reportId);
+    writeLocal("cv_hidden_reports_v1", [...state.hiddenReports]);
     toast("Contenuto segnalato. Lo esamineremo al più presto.", "success");
+    if (state.route === "report" && state.reportId === reportId) {
+      setRoute("dashboard");
+    } else {
+      render();
+    }
   } catch (error) {
     toast(error.message || "Segnalazione non riuscita.", "error");
   }
@@ -5077,8 +5102,9 @@ function filteredReports() {
   const q = (f.q || "").trim().toLowerCase();
   let list = [...state.reports];
 
-  // Nascondi i contenuti degli utenti bloccati
+  // Nascondi i contenuti degli utenti bloccati e quelli che l'utente ha segnalato
   if (state.blocked?.size) list = list.filter(r => !state.blocked.has(r.user_id));
+  if (state.hiddenReports?.size) list = list.filter(r => !state.hiddenReports.has(r.id));
 
   // Ricerca testuale (solo dalla barra globale dell'header desktop)
   if (q) {

@@ -1,4 +1,4 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v16-feed-rest-direct";
+const CIVICVOIS_CACHE = "civicvois-pwa-v17-rest-writes-filters";
 const APP_SHELL = [
   "/",
   "/index.html",
