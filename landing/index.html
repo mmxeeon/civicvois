@@ -87,27 +87,8 @@
     .scene-3d { transform-style: preserve-3d; position: relative; will-change: transform; }
     .phone { width: 290px; aspect-ratio: 9 / 19.3; border-radius: var(--r-2xl); transform-style: preserve-3d; position: relative; background: linear-gradient(165deg, #18233d, #0a1120); border: 1px solid rgba(255,255,255,0.14); box-shadow: var(--shadow-float), 0 0 0 8px #05090f; padding: 13px; }
     .phone::before { content: ""; position: absolute; top: 13px; left: 50%; transform: translateX(-50%); width: 98px; height: 22px; background: #05090f; border-radius: 0 0 15px 15px; z-index: 4; }
-    .scr { height: 100%; border-radius: var(--r-xl); background: radial-gradient(120% 60% at 50% 0%, #0c1628, #070d18); padding: 33px 13px 14px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-    .scr-pill { background: rgba(255,255,255,0.05); border: 1px solid var(--stroke); border-radius: 14px; padding: 10px 13px; font-size: 12px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; color: var(--text-2); }
-    .scr-pill .ico { width: 14px; height: 14px; color: var(--text-3); }
-    .scr-card { background: rgba(255,255,255,0.05); border: 1px solid var(--stroke); border-radius: 18px; padding: 12px; }
-    .scr-card .ph { height: 94px; border-radius: 13px; background: linear-gradient(135deg, rgba(45,212,191,0.2), rgba(20,184,166,0.1)); display: grid; place-items: center; color: var(--teal-light); }
-    .scr-card .ph .ico { width: 34px; height: 34px; stroke-width: 1.5; }
-    .scr-tags { display: flex; gap: 6px; margin: 11px 0 6px; }
-    .tag { font-size: 9.5px; font-weight: 600; padding: 4px 10px; border-radius: var(--r-full); background: rgba(20,184,166,0.16); color: var(--teal-light); }
-    .tag.alt { background: rgba(45,212,191,0.13); color: var(--teal-light); }
-    .scr-title { font-size: 13px; font-weight: 700; letter-spacing: -0.02em; color: var(--text); }
-    .scr-meta { font-size: 9.5px; color: var(--text-3); margin-top: 5px; display: flex; align-items: center; gap: 5px; }
-    .scr-meta .ico { width: 11px; height: 11px; }
-    .scr-actions { display: flex; gap: 6px; margin-top: 11px; }
-    .scr-btn { flex: 1; text-align: center; font-size: 9.5px; font-weight: 600; padding: 8px 0; border-radius: 11px; display: flex; align-items: center; justify-content: center; gap: 4px; }
-    .scr-btn .ico { width: 12px; height: 12px; }
-    .scr-btn.primary { background: linear-gradient(180deg, var(--teal-light), var(--teal)); color: #04211d; box-shadow: var(--shadow-btn); }
-    .scr-btn.ghost { border: 1px solid rgba(45,212,191,0.5); color: var(--teal-light); }
-    .scr-nav { margin-top: auto; display: flex; justify-content: space-around; padding-top: 9px; border-top: 1px solid var(--stroke); font-size: 9px; color: var(--text-3); }
-    .scr-nav .n { display: flex; flex-direction: column; align-items: center; gap: 3px; }
-    .scr-nav .n .ico { width: 15px; height: 15px; }
-    .scr-nav .n.on { color: var(--teal-light); }
+    .scr { height: 100%; border-radius: var(--r-xl); overflow: hidden; background: #070d18; }
+    .scr-img { width: 100%; height: 100%; object-fit: cover; object-position: top center; display: block; }
     .chip { position: absolute; border-radius: 18px; padding: 12px 15px; display: flex; align-items: center; gap: 11px; font-size: 13px; font-weight: 600; background: rgba(10,17,32,0.74); border: 1px solid var(--stroke-2); box-shadow: 0 22px 54px rgba(0,0,0,0.46); backdrop-filter: blur(10px); white-space: nowrap; }
     .chip .ic { width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; flex: none; }
     .chip .ic .ico { width: 18px; height: 18px; }
@@ -246,25 +227,7 @@
       <div class="scene">
         <div class="scene-3d" id="scene3d">
           <div class="phone">
-            <div class="scr">
-              <div class="scr-pill">Monza e della Brianza <svg class="ico" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
-              <div class="scr-pill">Verano Brianza <svg class="ico" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
-              <div class="scr-card">
-                <div class="ph"><svg class="ico" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.1v.2h6v-.2c0-.8.4-1.6 1-2.1A7 7 0 0 0 12 2z"/></svg></div>
-                <div class="scr-tags"><span class="tag">Nuova</span><span class="tag alt">Priorità bassa</span></div>
-                <div class="scr-title">Illuminazione insufficiente</div>
-                <div class="scr-meta"><svg class="ico" viewBox="0 0 24 24"><path d="M12 21s-7-5.7-7-11a7 7 0 0 1 14 0c0 5.3-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg> Via Roma, 52 · Verano Brianza</div>
-                <div class="scr-actions">
-                  <span class="scr-btn primary">Dettagli</span>
-                  <span class="scr-btn ghost"><svg class="ico" viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg> Vota</span>
-                </div>
-              </div>
-              <div class="scr-nav">
-                <span class="n on"><svg class="ico" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>Dashboard</span>
-                <span class="n"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nuova</span>
-                <span class="n"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>Profilo</span>
-              </div>
-            </div>
+            <div class="scr"><img class="scr-img" src="/assets/img/app-dashboard.webp" alt="La dashboard di CivicVois: statistiche delle segnalazioni e filtri per regione, provincia e categoria" /></div>
           </div>
           <div class="chip one glass" data-depth="60"><span class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M12 21s-7-5.7-7-11a7 7 0 0 1 14 0c0 5.3-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/></svg></span><span>Geolocalizzata<small>Via Roma, 52</small></span></div>
           <div class="chip two glass" data-depth="100"><span class="ic"><svg class="ico" viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg></span><span>+128 voti<small>dalla community</small></span></div>
