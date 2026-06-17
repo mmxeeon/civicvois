@@ -19,37 +19,31 @@
   <style>
     :root {
       --bg: #070d1a;
-      --bg-2: #050a14;
-      --teal: #14b8a6;
-      --teal-deep: #0d9488;
-      --teal-light: #2dd4bf;
-      --text: #f1f5f9;
-      --text-2: rgba(241, 245, 249, 0.74);
-      --text-3: rgba(241, 245, 249, 0.46);
-      --glass: rgba(255, 255, 255, 0.055);
-      --glass-2: rgba(255, 255, 255, 0.09);
-      --stroke: rgba(255, 255, 255, 0.11);
-      --stroke-2: rgba(255, 255, 255, 0.2);
-      --r-sm: 16px; --r-md: 22px; --r-lg: 28px; --r-xl: 36px; --r-2xl: 44px; --r-full: 999px;
+      --teal: #14b8a6; --teal-deep: #0d9488; --teal-light: #2dd4bf;
+      --text: #f1f5f9; --text-2: rgba(241,245,249,0.74); --text-3: rgba(241,245,249,0.46);
+      --glass: rgba(255,255,255,0.055); --glass-2: rgba(255,255,255,0.09);
+      --stroke: rgba(255,255,255,0.11); --stroke-2: rgba(255,255,255,0.2);
+      --r-sm: 16px; --r-md: 22px; --r-lg: 26px; --r-xl: 34px; --r-2xl: 40px; --r-full: 999px;
       --shadow-float: 0 28px 70px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.09) inset;
-      --shadow-btn: 0 6px 22px rgba(13,148,136,0.4);
-      --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-      --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+      --shadow-card: 0 1px 0 rgba(255,255,255,0.07) inset, 0 14px 44px rgba(0,0,0,0.34);
+      --shadow-card-h: 0 1px 0 rgba(255,255,255,0.12) inset, 0 28px 64px rgba(0,0,0,0.46), 0 0 0 1px rgba(45,212,191,0.14);
+      --shadow-btn: 0 10px 30px rgba(13,148,136,0.4);
+      --ease-out: cubic-bezier(0.22,1,0.36,1); --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
       --max: 1160px;
       --font: -apple-system, "SF Pro Display", "SF Pro Text", "Inter", "Helvetica Neue", system-ui, sans-serif;
     }
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
-    body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font);
-      line-height: 1.6; letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+    body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.6; letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; overflow-x: hidden; }
     a { color: inherit; text-decoration: none; }
     img { max-width: 100%; display: block; }
     .wrap { width: 100%; max-width: var(--max); margin: 0 auto; padding: 0 24px; }
-    section { padding: 100px 0; position: relative; }
+    section { padding: 104px 0; position: relative; }
     h1, h2, h3 { line-height: 1.08; letter-spacing: -0.035em; margin: 0 0 16px; font-weight: 700; }
-    h2 { font-size: clamp(28px, 4.4vw, 46px); }
+    h2 { font-size: clamp(29px, 4.6vw, 48px); }
     p { margin: 0 0 14px; color: var(--text-2); }
     .ico { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; display: block; }
+    :focus-visible { outline: 2px solid var(--teal-light); outline-offset: 3px; border-radius: 6px; }
 
     /* ---------- 3D background ---------- */
     #bg { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -2; display: block; }
@@ -57,9 +51,8 @@
     .bg-glow span { position: absolute; border-radius: 50%; mix-blend-mode: screen; }
     .bg-glow .a { width: 48vw; height: 48vw; left: -8vw; top: -6vh; background: radial-gradient(circle at 30% 30%, rgba(20,184,166,0.5), transparent 62%); animation: drift1 24s ease-in-out infinite; }
     .bg-glow .b { width: 52vw; height: 52vw; right: -12vw; top: 0; background: radial-gradient(circle at 60% 40%, rgba(45,212,191,0.42), transparent 62%); animation: drift2 28s ease-in-out infinite; }
-    .bg-glow .c { width: 40vw; height: 40vw; left: 26vw; top: 44vh; background: radial-gradient(circle at 50% 50%, rgba(59,130,246,0.22), transparent 64%); animation: drift3 32s ease-in-out infinite; }
-    .bg-vignette { position: fixed; inset: 0; z-index: -1; pointer-events: none;
-      background: radial-gradient(130% 90% at 50% 0%, transparent 42%, rgba(7,13,26,0.5) 78%, rgba(5,10,20,0.82) 100%); }
+    .bg-glow .c { width: 40vw; height: 40vw; left: 26vw; top: 44vh; background: radial-gradient(circle at 50% 50%, rgba(59,130,246,0.2), transparent 64%); animation: drift3 32s ease-in-out infinite; }
+    .bg-vignette { position: fixed; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(130% 90% at 50% 0%, transparent 42%, rgba(7,13,26,0.5) 78%, rgba(5,10,20,0.82) 100%); }
     @keyframes drift1 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(6vw,4vh) scale(1.12); } }
     @keyframes drift2 { 0%,100% { transform: translate(0,0) scale(1.05); } 50% { transform: translate(-5vw,5vh) scale(0.92); } }
     @keyframes drift3 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-4vw,-5vh) scale(1.15); } }
@@ -71,38 +64,28 @@
     .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 68px; }
     .brand { display: flex; align-items: center; gap: 11px; font-weight: 700; font-size: 19px; letter-spacing: -0.03em; }
     .brand img { width: 34px; height: 34px; border-radius: 10px; }
-    .nav-cta { font-size: 14px; font-weight: 600; padding: 10px 18px; border-radius: var(--r-full); color: #04211d; cursor: pointer;
-      background: linear-gradient(180deg, var(--teal-light), var(--teal)); box-shadow: var(--shadow-btn); transition: transform .2s var(--ease-out), box-shadow .2s; }
-    .nav-cta:hover { transform: translateY(-1px); box-shadow: 0 10px 30px rgba(13,148,136,0.5); }
+
+    /* ---------- Buttons ---------- */
+    .btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; font-family: var(--font); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; padding: 13px 24px; border-radius: var(--r-full); cursor: pointer; border: 1px solid transparent; transition: transform .2s var(--ease-out), box-shadow .2s, background .2s, border-color .2s; }
+    .btn .ico { width: 18px; height: 18px; }
+    .btn-primary { color: #04211d; background: linear-gradient(180deg, var(--teal-light), var(--teal)); box-shadow: var(--shadow-btn); }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 16px 40px rgba(13,148,136,0.52); }
+    .btn-ghost { color: var(--text); background: rgba(255,255,255,0.05); border-color: var(--stroke-2); }
+    .btn-ghost:hover { transform: translateY(-2px); background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.34); }
+    .nav .btn { padding: 10px 18px; font-size: 14px; }
 
     /* ---------- Hero ---------- */
-    .hero { padding-top: 60px; }
+    .hero { padding-top: 70px; padding-bottom: 96px; }
     .hero-grid { display: grid; grid-template-columns: 1.04fr 0.96fr; gap: 56px; align-items: center; }
-    .pill { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--text); padding: 7px 15px; border-radius: var(--r-full); margin-bottom: 24px; }
-    .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal-light); box-shadow: 0 0 0 4px rgba(20,184,166,0.2); }
-    .hero h1 { font-size: clamp(40px, 6.4vw, 70px); font-weight: 700; letter-spacing: -0.045em; }
+    .hero h1 { font-size: clamp(42px, 6.6vw, 72px); font-weight: 700; letter-spacing: -0.045em; margin-bottom: 20px; }
     .grad { background: linear-gradient(104deg, var(--teal) 8%, var(--teal-light) 92%); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .hero .lead { font-size: clamp(16px, 2.1vw, 19px); max-width: 520px; color: var(--text-2); }
-    .badges { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 32px; }
-    .hint { font-size: 13px; color: var(--text-3); margin-top: 16px; display: flex; align-items: center; gap: 7px; }
-    .hint .ico { width: 15px; height: 15px; color: var(--teal-light); }
+    .hero .lead { font-size: clamp(16px, 2.1vw, 19px); max-width: 516px; color: var(--text-2); }
+    .cta-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 36px; }
 
-    .store-badge { display: inline-flex; align-items: center; gap: 12px; padding: 12px 20px; border-radius: var(--r-sm); min-width: 208px; cursor: pointer;
-      background: rgba(255,255,255,0.05); border: 1px solid var(--stroke-2); backdrop-filter: blur(8px); transition: transform .18s var(--ease-out), border-color .18s, background .18s; }
-    .store-badge:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.36); background: rgba(255,255,255,0.09); }
-    .store-badge svg.glyph { width: 27px; height: 27px; flex: none; }
-    .store-badge .s-top { font-size: 11px; color: var(--text-2); line-height: 1.1; }
-    .store-badge .s-main { font-size: 18px; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; }
-    .store-badge[data-disabled="true"] { opacity: 0.62; cursor: default; }
-    .store-badge[data-disabled="true"]:hover { transform: none; border-color: var(--stroke-2); background: rgba(255,255,255,0.05); }
-    .store-badge .soon { margin-left: 4px; font-size: 10px; font-weight: 600; color: var(--teal-light); background: rgba(20,184,166,0.16); padding: 3px 9px; border-radius: var(--r-full); align-self: center; }
-
-    /* ---------- 3D phone scene ---------- */
+    /* ---------- 3D phone ---------- */
     .scene { perspective: 1300px; display: flex; justify-content: center; position: relative; }
     .scene-3d { transform-style: preserve-3d; position: relative; will-change: transform; }
-    .phone { width: 290px; aspect-ratio: 9 / 19.3; border-radius: var(--r-2xl); transform-style: preserve-3d; position: relative;
-      background: linear-gradient(165deg, #18233d, #0a1120); border: 1px solid rgba(255,255,255,0.14);
-      box-shadow: var(--shadow-float), 0 0 0 8px #05090f; padding: 13px; }
+    .phone { width: 290px; aspect-ratio: 9 / 19.3; border-radius: var(--r-2xl); transform-style: preserve-3d; position: relative; background: linear-gradient(165deg, #18233d, #0a1120); border: 1px solid rgba(255,255,255,0.14); box-shadow: var(--shadow-float), 0 0 0 8px #05090f; padding: 13px; }
     .phone::before { content: ""; position: absolute; top: 13px; left: 50%; transform: translateX(-50%); width: 98px; height: 22px; background: #05090f; border-radius: 0 0 15px 15px; z-index: 4; }
     .scr { height: 100%; border-radius: var(--r-xl); background: radial-gradient(120% 60% at 50% 0%, #0c1628, #070d18); padding: 33px 13px 14px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
     .scr-pill { background: rgba(255,255,255,0.05); border: 1px solid var(--stroke); border-radius: 14px; padding: 10px 13px; font-size: 12px; font-weight: 500; display: flex; justify-content: space-between; align-items: center; color: var(--text-2); }
@@ -125,39 +108,45 @@
     .scr-nav .n { display: flex; flex-direction: column; align-items: center; gap: 3px; }
     .scr-nav .n .ico { width: 15px; height: 15px; }
     .scr-nav .n.on { color: var(--teal-light); }
-
-    .chip { position: absolute; border-radius: 18px; padding: 12px 15px; display: flex; align-items: center; gap: 11px; font-size: 13px; font-weight: 600;
-      background: rgba(10,17,32,0.74); border: 1px solid var(--stroke-2); box-shadow: 0 22px 54px rgba(0,0,0,0.46); backdrop-filter: blur(10px); white-space: nowrap; }
+    .chip { position: absolute; border-radius: 18px; padding: 12px 15px; display: flex; align-items: center; gap: 11px; font-size: 13px; font-weight: 600; background: rgba(10,17,32,0.74); border: 1px solid var(--stroke-2); box-shadow: 0 22px 54px rgba(0,0,0,0.46); backdrop-filter: blur(10px); white-space: nowrap; }
     .chip .ic { width: 34px; height: 34px; border-radius: 12px; display: grid; place-items: center; flex: none; }
     .chip .ic .ico { width: 18px; height: 18px; }
     .chip small { display: block; font-size: 11px; color: var(--text-3); font-weight: 400; }
-    .chip.one { top: 11%; left: -13%; }
-    .chip.one .ic { background: rgba(20,184,166,0.17); color: var(--teal-light); }
-    .chip.two { bottom: 17%; right: -15%; }
-    .chip.two .ic { background: rgba(45,212,191,0.16); color: var(--teal-light); }
-    .chip.three { bottom: -4%; left: 4%; }
-    .chip.three .ic { background: rgba(59,130,246,0.2); color: #93b4f7; }
+    .chip.one { top: 11%; left: -13%; } .chip.one .ic { background: rgba(20,184,166,0.17); color: var(--teal-light); }
+    .chip.two { bottom: 17%; right: -15%; } .chip.two .ic { background: rgba(45,212,191,0.16); color: var(--teal-light); }
+    .chip.three { bottom: -4%; left: 4%; } .chip.three .ic { background: rgba(59,130,246,0.2); color: #93b4f7; }
 
     /* ---------- Section heading ---------- */
-    .eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--teal-light); margin-bottom: 14px; }
+    .eyebrow { display: inline-block; font-size: 13px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--teal-light); margin-bottom: 14px; }
     .center { text-align: center; }
-    .center p { margin-left: auto; margin-right: auto; max-width: 620px; }
+    .center p { margin-left: auto; margin-right: auto; max-width: 600px; }
 
-    /* ---------- Cards ---------- */
-    .grid { display: grid; gap: 20px; margin-top: 54px; }
+    /* ---------- Premium cards ---------- */
+    .grid { display: grid; gap: 20px; margin-top: 56px; }
     .cols-4 { grid-template-columns: repeat(4, 1fr); }
     .cols-3 { grid-template-columns: repeat(3, 1fr); }
-    .card { border-radius: var(--r-lg); padding: 28px; position: relative; transition: transform .3s var(--ease-out), border-color .3s, background .3s; transform-style: preserve-3d; will-change: transform; }
-    .card:hover { border-color: rgba(45,212,191,0.36); background: var(--glass-2); }
+    .card { position: relative; border-radius: var(--r-lg); padding: 30px 28px; overflow: hidden;
+      background: linear-gradient(180deg, rgba(255,255,255,0.075), rgba(255,255,255,0.022));
+      border: 1px solid var(--stroke); box-shadow: var(--shadow-card);
+      transition: transform .35s var(--ease-out), box-shadow .35s var(--ease-out), border-color .35s; transform-style: preserve-3d; }
+    .card::before { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .35s ease;
+      background: radial-gradient(420px circle at var(--mx, 50%) var(--my, -10%), rgba(45,212,191,0.14), transparent 62%); }
+    .card:hover { transform: translateY(-6px); border-color: rgba(45,212,191,0.32); box-shadow: var(--shadow-card-h); }
+    .card:hover::before { opacity: 1; }
+    .card > * { position: relative; }
     .card h3 { font-size: 19px; margin-bottom: 9px; letter-spacing: -0.03em; }
     .card p { margin: 0; font-size: 15px; color: var(--text-2); }
-    .ic-box { width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center; color: var(--teal-light); background: rgba(20,184,166,0.13); border: 1px solid rgba(20,184,166,0.24); margin-bottom: 18px; }
-    .ic-box.b { color: #93b4f7; background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.24); }
-    .ic-box .ico { width: 24px; height: 24px; }
-    .step-n { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; font-weight: 700; font-size: 17px; color: #04211d; background: linear-gradient(135deg, var(--teal), var(--teal-light)); margin-bottom: 16px; }
+    .ic-box { width: 54px; height: 54px; border-radius: 16px; display: grid; place-items: center; color: var(--teal-light); margin-bottom: 20px;
+      background: radial-gradient(120% 120% at 30% 18%, rgba(45,212,191,0.22), rgba(20,184,166,0.06));
+      border: 1px solid rgba(45,212,191,0.28); box-shadow: 0 10px 26px rgba(20,184,166,0.2), inset 0 1px 0 rgba(255,255,255,0.16); transition: box-shadow .35s, transform .35s var(--ease-out); }
+    .card:hover .ic-box { transform: translateY(-2px); box-shadow: 0 16px 34px rgba(20,184,166,0.34), inset 0 1px 0 rgba(255,255,255,0.22); }
+    .ic-box .ico { width: 25px; height: 25px; }
+    .step-n { width: 46px; height: 46px; border-radius: 15px; display: grid; place-items: center; font-weight: 700; font-size: 19px; color: #04211d; margin-bottom: 20px;
+      background: linear-gradient(135deg, var(--teal), var(--teal-light)); box-shadow: 0 10px 26px rgba(20,184,166,0.34), inset 0 1px 0 rgba(255,255,255,0.32); transition: transform .35s var(--ease-out); }
+    .card:hover .step-n { transform: translateY(-2px) scale(1.04); }
 
     /* ---------- Privacy band ---------- */
-    .band { border-radius: var(--r-2xl); padding: 50px; }
+    .band { border-radius: var(--r-2xl); padding: 52px; box-shadow: var(--shadow-card); }
     .band-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 36px; align-items: center; }
     .check { display: flex; gap: 13px; align-items: flex-start; margin-bottom: 16px; }
     .check .ico { width: 22px; height: 22px; color: var(--teal-light); flex: none; margin-top: 1px; }
@@ -166,46 +155,66 @@
     .link-teal:hover { gap: 9px; }
     .link-teal .ico { width: 17px; height: 17px; transition: transform .2s; }
 
-    /* ---------- Final CTA ---------- */
-    .cta-panel { border-radius: var(--r-2xl); padding: 66px 40px; text-align: center; position: relative; overflow: hidden; }
-    .cta-panel .badges { justify-content: center; }
-
     /* ---------- Footer ---------- */
-    footer { border-top: 1px solid var(--stroke); padding: 50px 0 64px; }
-    .foot-grid { display: flex; flex-wrap: wrap; gap: 20px 40px; justify-content: space-between; align-items: flex-start; }
-    .foot-links { display: flex; flex-wrap: wrap; gap: 11px 24px; }
+    footer { border-top: 1px solid var(--stroke); padding: 44px 0 56px; margin-top: 40px; }
+    .foot-grid { display: flex; flex-wrap: wrap; gap: 18px 40px; justify-content: space-between; align-items: center; }
+    .foot-links { display: flex; flex-wrap: wrap; gap: 10px 22px; }
     .foot-links a { color: var(--text-2); font-size: 14px; transition: color .15s; }
     .foot-links a:hover { color: var(--text); }
-    .foot-note { font-size: 13px; color: var(--text-3); max-width: 540px; margin-top: 22px; }
-    .foot-copy { font-size: 13px; color: var(--text-3); margin-top: 12px; }
+    .foot-note { font-size: 12.5px; color: var(--text-3); max-width: 600px; margin-top: 20px; }
+    .foot-copy { font-size: 13px; color: var(--text-3); margin-top: 10px; }
 
     /* ---------- Scroll reveal ---------- */
     [data-reveal] { opacity: 0; transform: translateY(28px); }
     [data-reveal].in { opacity: 1; transform: none; transition: opacity .8s var(--ease-out), transform .8s var(--ease-out); }
 
+    /* ---------- Download modal ---------- */
+    .modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 22px; }
+    .modal[hidden] { display: none; }
+    .modal-backdrop { position: absolute; inset: 0; background: rgba(4,8,16,0.66); backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px); animation: fadeIn .3s ease; }
+    .modal-card { position: relative; width: 100%; max-width: 416px; border-radius: var(--r-xl); padding: 38px 28px 30px; text-align: center; box-shadow: 0 44px 110px rgba(0,0,0,0.62); animation: popIn .42s var(--ease-spring); }
+    .modal-close { position: absolute; top: 15px; right: 15px; width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; background: rgba(255,255,255,0.06); border: 1px solid var(--stroke); color: var(--text-2); cursor: pointer; transition: background .2s, color .2s; }
+    .modal-close:hover { background: rgba(255,255,255,0.12); color: var(--text); }
+    .modal-logo { width: 70px; height: 70px; border-radius: 20px; margin: 0 auto 18px; box-shadow: 0 14px 36px rgba(20,184,166,0.34); }
+    .modal-card h2 { font-size: 25px; margin-bottom: 8px; letter-spacing: -0.035em; }
+    .modal-card > p { color: var(--text-2); font-size: 15px; margin: 0 auto 26px; max-width: 320px; }
+    .store-list { display: flex; flex-direction: column; gap: 12px; }
+    .store-opt { display: flex; align-items: center; gap: 14px; padding: 14px 18px; border-radius: 18px; text-align: left; cursor: pointer;
+      background: rgba(255,255,255,0.05); border: 1px solid var(--stroke-2); transition: transform .2s var(--ease-out), border-color .2s, background .2s; }
+    .store-opt:hover { transform: translateY(-2px); border-color: rgba(45,212,191,0.42); background: rgba(255,255,255,0.09); }
+    .store-opt[data-disabled="true"] { cursor: default; }
+    .store-opt[data-disabled="true"]:hover { transform: none; border-color: var(--stroke-2); background: rgba(255,255,255,0.05); }
+    .store-opt .glyph { width: 32px; height: 32px; flex: none; }
+    .store-opt .txt { flex: 1; min-width: 0; }
+    .store-opt .s-top { display: block; font-size: 11px; color: var(--text-3); line-height: 1.25; }
+    .store-opt .s-main { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
+    .store-opt .soon { font-size: 10px; font-weight: 600; color: var(--teal-light); background: rgba(20,184,166,0.16); padding: 4px 10px; border-radius: var(--r-full); flex: none; }
+    @keyframes fadeIn { from { opacity: 0; } }
+    @keyframes popIn { from { opacity: 0; transform: translateY(18px) scale(0.95); } }
+
     /* ---------- Responsive — MOBILE: testo sopra, telefono sotto ---------- */
     @media (max-width: 900px) {
-      .hero-grid { grid-template-columns: 1fr; gap: 52px; }
-      .hero { padding-top: 38px; }
-      /* niente order: la scena resta DOPO il testo nel DOM → telefono sotto */
+      .hero-grid { grid-template-columns: 1fr; gap: 48px; }
+      .hero { padding-top: 40px; padding-bottom: 64px; }
       .cols-4 { grid-template-columns: repeat(2, 1fr); }
       .cols-3 { grid-template-columns: 1fr; }
       .band-grid { grid-template-columns: 1fr; }
-      section { padding: 76px 0; }
+      section { padding: 80px 0; }
       .chip.one { left: -3%; } .chip.two { right: -3%; }
     }
     @media (max-width: 480px) {
       .cols-4 { grid-template-columns: 1fr; }
-      .store-badge { min-width: 0; flex: 1 1 100%; }
-      .band, .cta-panel { padding: 36px 22px; }
+      .band, .modal-card { padding: 32px 22px; }
       .chip { display: none; }
       .phone { width: 252px; }
+      .cta-row .btn { flex: 1 1 auto; }
+      .foot-grid { flex-direction: column; align-items: flex-start; gap: 16px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
       * { animation: none !important; scroll-behavior: auto !important; }
       [data-reveal] { opacity: 1 !important; transform: none !important; transition: none !important; }
-      .scene-3d, .card { transition: none !important; }
+      .scene-3d, .card, .ic-box, .step-n { transition: none !important; }
     }
   </style>
 </head>
@@ -218,7 +227,7 @@
   <header class="nav">
     <div class="wrap nav-inner">
       <a class="brand" href="/"><img src="/assets/img/civicvois-logo.png" alt="CivicVois" /> CivicVois</a>
-      <a class="nav-cta" href="#scarica">Scarica l'app</a>
+      <button class="btn btn-primary" data-open-modal>Scarica l'app</button>
     </div>
   </header>
 
@@ -226,11 +235,12 @@
   <section class="hero">
     <div class="wrap hero-grid">
       <div data-reveal>
-        <span class="pill glass"><span class="dot"></span> Piattaforma civica · in arrivo sugli store</span>
         <h1>Segnala, condividi e <span class="grad">migliora il tuo territorio</span></h1>
         <p class="lead">CivicVois dà voce ai cittadini: fotografa un problema, indica dove si trova e pubblicalo in pochi secondi. Segui le segnalazioni del tuo comune sulla mappa e costruisci una community più attenta.</p>
-        <div class="badges" id="badges-hero"></div>
-        <p class="hint"><svg class="ico" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></svg> Gratuita · iOS e Android · nessuna pubblicità</p>
+        <div class="cta-row">
+          <button class="btn btn-primary" data-open-modal><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg> Scarica CivicVois</button>
+          <a class="btn btn-ghost" href="#come-funziona">Come funziona</a>
+        </div>
       </div>
 
       <div class="scene">
@@ -273,10 +283,10 @@
         <p>Nessuna burocrazia: scegli, localizza, pubblica. Il resto lo segui dalla mappa.</p>
       </div>
       <div class="grid cols-4">
-        <div class="card glass" data-reveal data-tilt><div class="step-n">1</div><h3>Scegli la categoria</h3><p>Buche, illuminazione, rifiuti, verde pubblico: scegli il tipo di problema.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="step-n">2</div><h3>Indica la posizione</h3><p>Inserisci comune e via: la segnalazione viene collocata con precisione.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="step-n">3</div><h3>Pubblica</h3><p>Aggiungi foto e descrizione (facoltative) e pubblica in pochi secondi.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="step-n">4</div><h3>Segui il territorio</h3><p>Consulta le segnalazioni della tua zona sulla mappa e votale.</p></div>
+        <div class="card" data-reveal data-tilt><div class="step-n">1</div><h3>Scegli la categoria</h3><p>Buche, illuminazione, rifiuti, verde pubblico: scegli il tipo di problema.</p></div>
+        <div class="card" data-reveal data-tilt><div class="step-n">2</div><h3>Indica la posizione</h3><p>Inserisci comune e via: la segnalazione viene collocata con precisione.</p></div>
+        <div class="card" data-reveal data-tilt><div class="step-n">3</div><h3>Pubblica</h3><p>Aggiungi foto e descrizione (facoltative) e pubblica in pochi secondi.</p></div>
+        <div class="card" data-reveal data-tilt><div class="step-n">4</div><h3>Segui il territorio</h3><p>Consulta le segnalazioni della tua zona sulla mappa e votale.</p></div>
       </div>
     </div>
   </section>
@@ -286,29 +296,17 @@
     <div class="wrap">
       <div class="center" data-reveal><span class="eyebrow">Perché CivicVois</span><h2>Tutto ciò che serve, in tasca</h2></div>
       <div class="grid cols-3">
-        <div class="card glass" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg></div><h3>Segnalazioni semplici</h3><p>Pochi tocchi per pubblicare. Descrizione e foto facoltative: zero attriti.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="ic-box b"><svg class="ico" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></div><h3>Mappa del territorio</h3><p>Vedi cosa succede vicino a te. Ogni segnalazione è geolocalizzata.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div><h3>Profilo utente</h3><p>Gestisci le tue segnalazioni, il profilo e le preferenze in un posto.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="ic-box b"><svg class="ico" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><circle cx="17" cy="9" r="2.6"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5M15 20c0-2 .8-3.4 2-4.2"/></svg></div><h3>Community locale</h3><p>Vota le segnalazioni degli altri e fai emergere le priorità del comune.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Trasparenza</h3><p>Le segnalazioni sono pubbliche e consultabili: più chiarezza per tutti.</p></div>
-        <div class="card glass" data-reveal data-tilt><div class="ic-box b"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Dati al sicuro</h3><p>Trattati con attenzione, cifrati in transito. Elimini l'account quando vuoi.</p></div>
+        <div class="card" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg></div><h3>Segnalazioni semplici</h3><p>Pochi tocchi per pubblicare. Descrizione e foto facoltative: zero attriti.</p></div>
+        <div class="card" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></div><h3>Mappa del territorio</h3><p>Vedi cosa succede vicino a te. Ogni segnalazione è geolocalizzata.</p></div>
+        <div class="card" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg></div><h3>Profilo utente</h3><p>Gestisci le tue segnalazioni, il profilo e le preferenze in un posto.</p></div>
+        <div class="card" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><circle cx="17" cy="9" r="2.6"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5M15 20c0-2 .8-3.4 2-4.2"/></svg></div><h3>Community locale</h3><p>Vota le segnalazioni degli altri e fai emergere le priorità del comune.</p></div>
+        <div class="card" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Trasparenza</h3><p>Le segnalazioni sono pubbliche e consultabili: più chiarezza per tutti.</p></div>
+        <div class="card" data-reveal data-tilt><div class="ic-box"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg></div><h3>Dati al sicuro</h3><p>Trattati con attenzione, cifrati in transito. Elimini l'account quando vuoi.</p></div>
       </div>
     </div>
   </section>
 
-  <!-- ===== Anteprima ===== -->
-  <section id="anteprima">
-    <div class="wrap">
-      <div class="center" data-reveal><span class="eyebrow">Anteprima</span><h2>Pensata per il telefono</h2><p>Interfaccia chiara, mappa sempre a portata di mano, navigazione semplice.</p></div>
-      <div class="grid cols-3">
-        <div class="card glass center" data-reveal data-tilt><div class="ic-box" style="margin:0 auto 18px;"><svg class="ico" viewBox="0 0 24 24"><path d="M4 4h11l5 5v11H4z"/><path d="M14 4v5h5M8 13h8M8 17h5"/></svg></div><h3>Nuova segnalazione</h3><p>Categoria, posizione, foto opzionale: pubblichi in un attimo.</p></div>
-        <div class="card glass center" data-reveal data-tilt><div class="ic-box b" style="margin:0 auto 18px;"><svg class="ico" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></svg></div><h3>Dashboard & mappa</h3><p>Filtra per comune e categoria, esplora le segnalazioni sulla mappa.</p></div>
-        <div class="card glass center" data-reveal data-tilt><div class="ic-box" style="margin:0 auto 18px;"><svg class="ico" viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9C1 9 2.5 5.5 6 5.5c2 0 3.2 1.2 4 2.3.8-1.1 2-2.3 4-2.3 3.5 0 5 3.5 3.5 6.5C19 16.5 12 21 12 21z"/></svg></div><h3>Dettaglio & voto</h3><p>Apri una segnalazione, leggi i dettagli e votala per darle priorità.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== Privacy ===== -->
+  <!-- ===== Privacy & sicurezza ===== -->
   <section id="privacy">
     <div class="wrap">
       <div class="band glass" data-reveal>
@@ -329,36 +327,35 @@
     </div>
   </section>
 
-  <!-- ===== CTA finale ===== -->
-  <section id="scarica">
-    <div class="wrap">
-      <div class="cta-panel glass" data-reveal>
-        <span class="eyebrow">Inizia ora</span>
-        <h2>Scarica CivicVois</h2>
-        <p class="center">Dai voce al tuo territorio. L'app arriva presto su App Store e Google Play.</p>
-        <div class="badges" id="badges-cta" style="margin-top:30px;"></div>
-      </div>
-    </div>
-  </section>
-
   <!-- ===== Footer ===== -->
   <footer>
     <div class="wrap">
       <div class="foot-grid">
         <a class="brand" href="/"><img src="/assets/img/civicvois-logo.png" alt="CivicVois" style="width:30px;height:30px;border-radius:8px;" /> CivicVois</a>
         <nav class="foot-links" aria-label="Link legali e supporto">
-          <a href="/legal/privacy.html">Privacy Policy</a>
+          <a href="/legal/privacy.html">Privacy</a>
           <a href="/legal/termini.html">Termini</a>
-          <a href="/legal/contenuti.html">Regole contenuti</a>
+          <a href="/legal/contenuti.html">Contenuti</a>
           <a href="/legal/supporto.html">Supporto</a>
           <a href="/legal/elimina-account.html">Elimina account</a>
-          <a href="mailto:supporto@civicvois.it">Contatti</a>
         </nav>
       </div>
       <p class="foot-note">CivicVois è un servizio indipendente e non costituisce un canale ufficiale di Comuni o Pubblica Amministrazione. Le segnalazioni non hanno valore di istanza formale.</p>
-      <p class="foot-copy">© <span id="year">2026</span> CivicVois — Mattia Molteni. Tutti i diritti riservati.</p>
+      <p class="foot-copy">© <span id="year">2026</span> CivicVois — Mattia Molteni.</p>
     </div>
   </footer>
+
+  <!-- ===== Download modal ===== -->
+  <div class="modal" id="download-modal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-card glass" role="dialog" aria-modal="true" aria-labelledby="dl-title">
+      <button class="modal-close" type="button" aria-label="Chiudi" data-close-modal><svg class="ico" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      <img class="modal-logo" src="/assets/img/civicvois-logo.png" alt="CivicVois" />
+      <h2 id="dl-title">Scarica CivicVois</h2>
+      <p>Presto disponibile su App Store e Google Play. Dai voce al tuo territorio.</p>
+      <div class="store-list" id="modal-stores"></div>
+    </div>
+  </div>
 
   <script src="/assets/landing.js"></script>
 </body>
