@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#060d1a" />
+  <title>CivicVois — Segnala, condividi e migliora il tuo territorio</title>
+  <meta name="description" content="CivicVois è l'app civica per segnalare problemi del tuo territorio, seguirli su mappa e dare voce alla tua community locale. Scaricala su App Store e Google Play." />
+
+  <!-- Open Graph / social -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="CivicVois — Segnala, condividi e migliora il tuo territorio" />
+  <meta property="og:description" content="L'app civica per segnalare problemi del territorio e seguire le segnalazioni della tua community." />
+  <meta property="og:url" content="https://civicvois.it" />
+  <meta property="og:image" content="https://civicvois.it/assets/icons/icon-512.png" />
+
+  <link rel="icon" href="/assets/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
+
+  <style>
+    :root {
+      --bg: #060d1a;
+      --bg-2: #0b1020;
+      --surface: rgba(255, 255, 255, 0.04);
+      --surface-2: rgba(255, 255, 255, 0.06);
+      --border: rgba(255, 255, 255, 0.09);
+      --text: #eaf1fb;
+      --muted: #9fb0c7;
+      --emerald: #10b981;
+      --emerald-soft: rgba(16, 185, 129, 0.14);
+      --cyan: #22d3ee;
+      --radius: 18px;
+      --max: 1080px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--text);
+      background:
+        radial-gradient(1100px 620px at 78% -8%, rgba(34, 211, 238, 0.16), transparent 60%),
+        radial-gradient(900px 560px at 12% 8%, rgba(16, 185, 129, 0.16), transparent 58%),
+        var(--bg);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+    a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; display: block; }
+    .wrap { width: 100%; max-width: var(--max); margin: 0 auto; padding: 0 22px; }
+    section { padding: 72px 0; }
+    h1, h2, h3 { line-height: 1.18; letter-spacing: -0.02em; margin: 0 0 14px; }
+    h2 { font-size: clamp(26px, 4.6vw, 38px); }
+    p { margin: 0 0 14px; color: var(--muted); }
+    .eyebrow {
+      display: inline-block; font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--emerald); margin-bottom: 14px;
+    }
+    .center { text-align: center; }
+    .center p { margin-left: auto; margin-right: auto; max-width: 620px; }
+
+    /* ---------- Header ---------- */
+    header.nav {
+      position: sticky; top: 0; z-index: 50;
+      backdrop-filter: saturate(140%) blur(14px);
+      background: rgba(6, 13, 26, 0.72);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+    .brand img { width: 34px; height: 34px; border-radius: 9px; }
+    .nav-cta {
+      font-size: 14px; font-weight: 700; padding: 9px 16px; border-radius: 999px;
+      background: var(--emerald); color: #042016;
+    }
+
+    /* ---------- Hero ---------- */
+    .hero { padding-top: 56px; }
+    .hero-grid { display: grid; grid-template-columns: 1.05fr 0.95fr; gap: 48px; align-items: center; }
+    .hero h1 { font-size: clamp(34px, 6vw, 58px); font-weight: 850; }
+    .hero h1 .grad {
+      background: linear-gradient(100deg, var(--emerald), var(--cyan));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .hero .lead { font-size: clamp(16px, 2.2vw, 19px); max-width: 520px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 26px; }
+
+    /* Store badge */
+    .store-badge {
+      display: inline-flex; align-items: center; gap: 12px;
+      padding: 11px 20px; border-radius: 14px;
+      background: #000; border: 1px solid rgba(255,255,255,0.16);
+      min-width: 200px; transition: transform .15s ease, border-color .15s ease, opacity .15s ease;
+    }
+    .store-badge:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.34); }
+    .store-badge svg { width: 30px; height: 30px; flex: none; }
+    .store-badge .s-top { font-size: 11px; color: #c9d4e3; line-height: 1.1; }
+    .store-badge .s-main { font-size: 18px; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; }
+    .store-badge[data-disabled="true"] { opacity: 0.62; cursor: not-allowed; }
+    .store-badge[data-disabled="true"]:hover { transform: none; border-color: rgba(255,255,255,0.16); }
+    .store-badge .soon {
+      margin-left: 6px; font-size: 10px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase;
+      color: var(--emerald); background: var(--emerald-soft); padding: 3px 8px; border-radius: 999px; align-self: center;
+    }
+    .hint { font-size: 13px; color: var(--muted); margin-top: 14px; }
+
+    /* ---------- Phone mockup ---------- */
+    .phone-wrap { display: flex; justify-content: center; }
+    .phone {
+      width: 270px; aspect-ratio: 9 / 19.5; border-radius: 42px;
+      background: linear-gradient(180deg, #0e1626, #0a0f1c);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 40px 90px rgba(0,0,0,0.55), inset 0 0 0 7px #05080f;
+      padding: 14px 12px; position: relative; overflow: hidden;
+    }
+    .phone::before {
+      content: ""; position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+      width: 92px; height: 22px; background: #05080f; border-radius: 0 0 14px 14px; z-index: 3;
+    }
+    .scr { height: 100%; border-radius: 30px; background: var(--bg); padding: 30px 12px 12px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+    .scr-pill { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font-size: 12px; font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+    .scr-pill .chev { color: var(--muted); }
+    .scr-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
+    .scr-card .ph { height: 88px; border-radius: 10px; background: linear-gradient(135deg, rgba(34,211,238,0.16), rgba(16,185,129,0.10)); display: grid; place-items: center; font-size: 34px; }
+    .scr-tags { display: flex; gap: 6px; margin: 10px 0 6px; }
+    .tag { font-size: 9px; font-weight: 700; padding: 4px 9px; border-radius: 999px; background: var(--emerald-soft); color: var(--emerald); }
+    .tag.alt { background: rgba(34,211,238,0.14); color: var(--cyan); }
+    .scr-title { font-size: 12px; font-weight: 700; }
+    .scr-meta { font-size: 9px; color: var(--muted); margin-top: 4px; }
+    .scr-actions { display: flex; gap: 6px; margin-top: 10px; }
+    .scr-btn { flex: 1; text-align: center; font-size: 9px; font-weight: 700; padding: 7px 0; border-radius: 9px; }
+    .scr-btn.primary { background: var(--emerald); color: #042016; }
+    .scr-btn.ghost { border: 1px solid var(--cyan); color: var(--cyan); }
+    .scr-nav { margin-top: auto; display: flex; justify-content: space-around; padding-top: 8px; border-top: 1px solid var(--border); font-size: 9px; color: var(--muted); }
+    .scr-nav b { color: var(--emerald); }
+
+    /* ---------- Cards / steps ---------- */
+    .grid { display: grid; gap: 18px; }
+    .cols-4 { grid-template-columns: repeat(4, 1fr); }
+    .cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .cols-2 { grid-template-columns: repeat(2, 1fr); }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 24px; transition: transform .15s ease, border-color .15s ease;
+    }
+    .card:hover { transform: translateY(-3px); border-color: rgba(34,211,238,0.32); }
+    .card h3 { font-size: 18px; margin-bottom: 8px; }
+    .card p { margin: 0; font-size: 15px; }
+    .ico {
+      width: 46px; height: 46px; border-radius: 12px; display: grid; place-items: center;
+      font-size: 22px; background: var(--emerald-soft); margin-bottom: 16px;
+    }
+    .step-n {
+      width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
+      font-weight: 800; color: #042016; background: linear-gradient(135deg, var(--emerald), var(--cyan)); margin-bottom: 14px;
+    }
+
+    /* ---------- Privacy band ---------- */
+    .band {
+      background: linear-gradient(135deg, rgba(16,185,129,0.10), rgba(34,211,238,0.06));
+      border: 1px solid var(--border); border-radius: 24px; padding: 40px;
+    }
+    .band-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 30px; align-items: center; }
+    .check { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 14px; }
+    .check svg { flex: none; width: 22px; height: 22px; color: var(--emerald); margin-top: 2px; }
+    .check span { color: var(--text); font-size: 15px; }
+    .link-emerald { color: var(--emerald); font-weight: 600; }
+    .link-emerald:hover { text-decoration: underline; }
+
+    /* ---------- Final CTA ---------- */
+    .cta { text-align: center; }
+    .cta .badges { justify-content: center; }
+
+    /* ---------- Footer ---------- */
+    footer { border-top: 1px solid var(--border); padding: 44px 0 60px; }
+    .foot-grid { display: flex; flex-wrap: wrap; gap: 18px 40px; justify-content: space-between; align-items: flex-start; }
+    .foot-links { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+    .foot-links a { color: var(--muted); font-size: 14px; }
+    .foot-links a:hover { color: var(--text); }
+    .foot-note { font-size: 13px; color: var(--muted); max-width: 520px; margin-top: 18px; }
+    .foot-copy { font-size: 13px; color: var(--muted); margin-top: 12px; }
+
+    @media (max-width: 860px) {
+      .hero-grid { grid-template-columns: 1fr; gap: 40px; }
+      .hero { padding-top: 36px; }
+      .phone-wrap { order: -1; }
+      .cols-4 { grid-template-columns: repeat(2, 1fr); }
+      .cols-3 { grid-template-columns: 1fr; }
+      .cols-2 { grid-template-columns: 1fr; }
+      .band-grid { grid-template-columns: 1fr; }
+      section { padding: 56px 0; }
+    }
+    @media (max-width: 460px) {
+      .cols-4 { grid-template-columns: 1fr; }
+      .store-badge { min-width: 0; flex: 1; }
+    }
+  </style>
+</head>
+<body>
+  <!-- ===== Header ===== -->
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="/">
+        <img src="/assets/img/civicvois-logo.png" alt="CivicVois" />
+        CivicVois
+      </a>
+      <a class="nav-cta" href="#scarica">Scarica l'app</a>
+    </div>
+  </header>
+
+  <!-- ===== Hero ===== -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow">Piattaforma civica</span>
+        <h1>Segnala, condividi e <span class="grad">migliora il tuo territorio</span></h1>
+        <p class="lead">CivicVois è l'app che dà voce ai cittadini: fotografa un problema, indica dove si trova e pubblicalo in pochi secondi. Segui le segnalazioni del tuo comune e costruisci una community più attenta.</p>
+        <div class="badges" id="badges-hero"></div>
+        <p class="hint">Disponibile presto su iOS e Android. Gratuita.</p>
+      </div>
+
+      <div class="phone-wrap">
+        <div class="phone" aria-hidden="true">
+          <div class="scr">
+            <div class="scr-pill">Monza e della Brianza <span class="chev">▾</span></div>
+            <div class="scr-pill">Verano Brianza <span class="chev">▾</span></div>
+            <div class="scr-card">
+              <div class="ph">💡</div>
+              <div class="scr-tags"><span class="tag">Nuova</span><span class="tag alt">Priorità bassa</span></div>
+              <div class="scr-title">Illuminazione insufficiente</div>
+              <div class="scr-meta">📍 Via Roma, 52 · Verano Brianza</div>
+              <div class="scr-actions">
+                <span class="scr-btn primary">Dettagli</span>
+                <span class="scr-btn ghost">♥ Vota</span>
+              </div>
+            </div>
+            <div class="scr-nav"><b>● Dashboard</b><span>＋ Nuova</span><span>Profilo</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Come funziona ===== -->
+  <section id="come-funziona">
+    <div class="wrap">
+      <div class="center">
+        <span class="eyebrow">Come funziona</span>
+        <h2>Una segnalazione in 4 passi</h2>
+        <p>Nessuna burocrazia: scegli, localizza, pubblica. Il resto lo segui dalla mappa.</p>
+      </div>
+      <div class="grid cols-4" style="margin-top:42px;">
+        <div class="card">
+          <div class="step-n">1</div>
+          <h3>Scegli la categoria</h3>
+          <p>Buche, illuminazione, rifiuti, verde pubblico e altro: scegli il tipo di problema.</p>
+        </div>
+        <div class="card">
+          <div class="step-n">2</div>
+          <h3>Indica la posizione</h3>
+          <p>Inserisci comune e via: la segnalazione viene collocata con precisione sul territorio.</p>
+        </div>
+        <div class="card">
+          <div class="step-n">3</div>
+          <h3>Pubblica la segnalazione</h3>
+          <p>Aggiungi una foto e una descrizione (facoltative) e pubblica in pochi secondi.</p>
+        </div>
+        <div class="card">
+          <div class="step-n">4</div>
+          <h3>Segui il territorio</h3>
+          <p>Consulta le segnalazioni della tua zona sulla mappa e votale per dare priorità.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Vantaggi ===== -->
+  <section id="vantaggi">
+    <div class="wrap">
+      <div class="center">
+        <span class="eyebrow">Perché CivicVois</span>
+        <h2>Tutto ciò che serve, in tasca</h2>
+      </div>
+      <div class="grid cols-3" style="margin-top:42px;">
+        <div class="card"><div class="ico">⚡</div><h3>Segnalazioni semplici</h3><p>Pochi tocchi per pubblicare. Descrizione e foto sono facoltative: zero attriti.</p></div>
+        <div class="card"><div class="ico">🗺️</div><h3>Mappa del territorio</h3><p>Vedi cosa succede vicino a te. Ogni segnalazione è geolocalizzata e consultabile.</p></div>
+        <div class="card"><div class="ico">👤</div><h3>Profilo utente</h3><p>Gestisci le tue segnalazioni, il tuo profilo e le tue preferenze in un unico posto.</p></div>
+        <div class="card"><div class="ico">🤝</div><h3>Community locale</h3><p>Vota le segnalazioni degli altri cittadini e fai emergere le priorità del tuo comune.</p></div>
+        <div class="card"><div class="ico">🔍</div><h3>Trasparenza</h3><p>Le segnalazioni sono pubbliche e consultabili: più chiarezza per tutti.</p></div>
+        <div class="card"><div class="ico">🔒</div><h3>Dati al sicuro</h3><p>I tuoi dati sono trattati con attenzione e puoi eliminare l'account quando vuoi.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Screenshot / mockup ===== -->
+  <section id="anteprima">
+    <div class="wrap">
+      <div class="center">
+        <span class="eyebrow">Anteprima</span>
+        <h2>Pensata per il telefono</h2>
+        <p>Interfaccia chiara, mappa sempre a portata di mano, navigazione semplice.</p>
+      </div>
+      <div class="grid cols-3" style="margin-top:42px; align-items:start;">
+        <div class="card center">
+          <div class="ico" style="margin:0 auto 16px;">📝</div>
+          <h3>Nuova segnalazione</h3>
+          <p>Categoria, posizione, foto opzionale: pubblichi in un attimo.</p>
+        </div>
+        <div class="card center">
+          <div class="ico" style="margin:0 auto 16px;">🗺️</div>
+          <h3>Dashboard & mappa</h3>
+          <p>Filtra per comune e categoria, esplora le segnalazioni sulla mappa.</p>
+        </div>
+        <div class="card center">
+          <div class="ico" style="margin:0 auto 16px;">❤️</div>
+          <h3>Dettaglio & voto</h3>
+          <p>Apri una segnalazione, leggi i dettagli e votala per darle priorità.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== Privacy / sicurezza ===== -->
+  <section id="privacy">
+    <div class="wrap">
+      <div class="band">
+        <div class="band-grid">
+          <div>
+            <span class="eyebrow">Privacy & sicurezza</span>
+            <h2>I tuoi dati, sotto controllo</h2>
+            <p>CivicVois è un servizio indipendente, non affiliato ad alcun ente pubblico. Trattiamo i dati con attenzione e ti diamo sempre il pieno controllo.</p>
+          </div>
+          <div>
+            <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Dati gestiti con attenzione e cifrati in transito.</span></div>
+            <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Elimini il tuo account in qualsiasi momento, dall'app o via email.</span></div>
+            <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Esporti i tuoi dati quando vuoi.</span></div>
+            <p style="margin-top:16px;"><a class="link-emerald" href="/legal/privacy.html">Leggi la Privacy Policy →</a></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CTA finale ===== -->
+  <section id="scarica" class="cta">
+    <div class="wrap">
+      <span class="eyebrow">Inizia ora</span>
+      <h2>Scarica CivicVois</h2>
+      <p class="center">Dai voce al tuo territorio. L'app arriva presto su App Store e Google Play.</p>
+      <div class="badges" id="badges-cta" style="margin-top:26px;"></div>
+    </div>
+  </section>
+
+  <!-- ===== Footer ===== -->
+  <footer>
+    <div class="wrap">
+      <div class="foot-grid">
+        <a class="brand" href="/"><img src="/assets/img/civicvois-logo.png" alt="CivicVois" style="width:30px;height:30px;border-radius:8px;" /> CivicVois</a>
+        <nav class="foot-links" aria-label="Link legali e supporto">
+          <a href="/legal/privacy.html">Privacy Policy</a>
+          <a href="/legal/termini.html">Termini</a>
+          <a href="/legal/contenuti.html">Regole contenuti</a>
+          <a href="/legal/supporto.html">Supporto</a>
+          <a href="/legal/elimina-account.html">Elimina account</a>
+          <a href="mailto:supporto@civicvois.it">Contatti</a>
+        </nav>
+      </div>
+      <p class="foot-note">CivicVois è un servizio indipendente e non costituisce un canale ufficiale di Comuni o Pubblica Amministrazione. Le segnalazioni non hanno valore di istanza formale.</p>
+      <p class="foot-copy">© <span id="year">2026</span> CivicVois — Mattia Molteni. Tutti i diritti riservati.</p>
+    </div>
+  </footer>
+
+  <script src="/assets/landing.js"></script>
+</body>
+</html>

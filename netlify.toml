@@ -1,9 +1,17 @@
+# civicvois.it pubblica la LANDING (cartella landing/), non la web app.
+# La web app completa resta nella root del repo (index.html + assets/) ed è usata
+# SOLO da Capacitor per buildare le app iOS/Android (vedi scripts/build-web.mjs →
+# www/). Per riattivare la web app sul web basta rimettere publish = "." (o servire
+# l'app su un path/sottodominio). Le pagine legali vivono in landing/legal/.
 [build]
-  publish = "."
+  publish = "landing"
 
 [build.environment]
   NODE_VERSION = "20"
 
+# Catch-all: ora index.html È la landing, quindi i path sconosciuti (vecchi deep
+# link dell'app, ecc.) mostrano la landing invece di un 404. I file reali in
+# landing/ (es. /legal/*.html, /assets/*) sono serviti PRIMA di questo rewrite.
 [[redirects]]
   from = "/*"
   to = "/index.html"
