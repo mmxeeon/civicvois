@@ -245,8 +245,19 @@ async function supabaseRestJson(path, { method = "GET", body = null, prefer = ""
     try { details = await response.text(); } catch {}
     throw new Error(details || `Richiesta Supabase non riuscita (${response.status}).`);
   }
+  // Corpo vuoto: NON chiamare response.json() a vuoto. Una INSERT/POST senza
+  // Prefer:return=representation risponde 201 SENZA body (es. like su interazioni,
+  // segnala/blocca utente): su WebKit iOS response.json() su body vuoto lancia
+  // "The string did not match the expected pattern" (su Chrome "Unexpected end of
+  // JSON input"), facendo fallire l'operazione che invece era andata a buon fine.
   if (response.status === 204) return null;
-  return response.json();
+  const text = await response.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // Lettura via REST diretto. A differenza di supabaseRestJson NON richiede il
@@ -271,7 +282,15 @@ async function supabaseRestRead(path, { prefer = "", timeoutMs = 12000 } = {}) {
     throw new Error(details || `Lettura Supabase non riuscita (${response.status}).`);
   }
   const contentRange = response.headers.get("content-range") || "";
-  const data = response.status === 204 ? [] : await response.json();
+  // Difensivo come supabaseRestJson: niente response.json() su body vuoto (su
+  // WebKit iOS lancerebbe "The string did not match the expected pattern").
+  let data = [];
+  if (response.status !== 204) {
+    const text = await response.text();
+    if (text) {
+      try { data = JSON.parse(text); } catch { data = []; }
+    }
+  }
   return { data: Array.isArray(data) ? data : (data == null ? [] : [data]), contentRange };
 }
 

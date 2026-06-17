@@ -1,4 +1,4 @@
-const CIVICVOIS_CACHE = "civicvois-pwa-v17-rest-writes-filters";
+const CIVICVOIS_CACHE = "civicvois-pwa-v18-empty-body-json-fix";
 const APP_SHELL = [
   "/",
   "/index.html",
