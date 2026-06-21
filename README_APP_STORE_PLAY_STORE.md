@@ -11,7 +11,7 @@ Documento operativo per pubblicare CivicVois come app iOS/Android tramite Capaci
 - Versione app: `3.0.0`
 - Android `versionCode`: `3`
 - iOS `CURRENT_PROJECT_VERSION`: `3`
-- Account demo reviewer: `demo@civicvois.it` / `civicvois`
+- Account demo reviewer: da creare e inserire solo nei campi App Review/App Access dei portali store, mai nel repository.
 - Android release AAB verificata: `android/app/build/outputs/bundle/release/app-release.aab`
 - Android upload key locale: `android/civicvois-upload-key.p12`
 - Android keystore config locale: `android/keystore.properties`

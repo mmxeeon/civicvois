@@ -53,10 +53,9 @@ Formati minimi:
 
 ## Note reviewer
 
-Account demo:
-
-- Email: `demo@civicvois.it`
-- Password: `civicvois`
+Account demo: creare un account test dedicato e inserire email/password solo nei
+campi privati App Review/App Access dei portali Apple e Google. Non salvare
+credenziali reali in file versionati.
 
 Nota da includere:
 

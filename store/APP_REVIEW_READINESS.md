@@ -35,8 +35,8 @@ Da completare prima di TestFlight:
 
 Account suggerito:
 
-- Email: `demo@civicvois.it`
-- Password: `civicvois`
+- Email: inserire l'email dell'account demo solo in App Store Connect.
+- Password: inserire la password dell'account demo solo in App Store Connect.
 
 Prima dell'invio verificare che l'account:
 
@@ -56,8 +56,8 @@ affiliata a Comuni, enti pubblici o Pubblica Amministrazione e le segnalazioni
 create nell'app non vengono inoltrate automaticamente agli enti competenti.
 
 Account demo:
-Email: demo@civicvois.it
-Password: civicvois
+Email: [inserire in App Store Connect]
+Password: [inserire in App Store Connect]
 
 Flussi testabili:
 - accesso email/password;

@@ -99,7 +99,7 @@ La verifica `06` deve restituire solo righe con `ok = true`. In piu, la cancella
 Google Play forms to complete:
 
 - Data Safety.
-- App Access: account demo `demo@civicvois.it` / `civicvois`.
+- App Access: inserire un account demo dedicato solo nel portale Google Play Console.
 - Content Rating questionnaire.
 - Target audience and content.
 - UGC/moderation declaration if requested.

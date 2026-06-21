@@ -5478,8 +5478,7 @@ function createDemoBackend() {
     users: [
       {
         id: "demo-user",
-        email: "demo@civicvois.it",
-        password: "civicvois",
+        email: "demo@example.invalid",
         full_name: "Utente Demo CivicVois",
         username: "demo",
         comune: "Verano Brianza",
@@ -5580,7 +5579,10 @@ function createDemoBackend() {
       return { id: user.id, email: user.email };
     },
     login(email, password) {
-      const user = db.users.find(u => u.email === email && u.password === password);
+      const user = db.users.find(u => u.email === email);
+      if (!user) return null;
+      if (user.password && user.password !== password) return null;
+      if (!user.password && !String(password || "").trim()) return null;
       return user ? { id: user.id, email: user.email } : null;
     },
     getProfile(id) {
