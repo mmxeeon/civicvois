@@ -60,6 +60,7 @@ Dati trattati da fornitori necessari al funzionamento:
 - Supabase: autenticazione, database, storage immagini.
 - Netlify: hosting e distribuzione della PWA.
 - Google: accesso Google solo se l'utente lo usa.
+- Apple: accesso Apple solo se l'utente lo usa.
 - OpenStreetMap/Nominatim: verifica indirizzi.
 
 L'app non vende dati personali e non usa advertising tracking nel codice attuale.
@@ -88,11 +89,21 @@ La verifica `06` deve restituire solo righe con `ok = true`. In piu, la cancella
 - Data encrypted in transit: yes.
 - User can request data deletion: yes, in app and via `privacy@civicvois.it`.
 - Account creation required: yes for creating reports and interacting.
+- Photo/video permissions: the Android build uses the system picker/input flow and does not request broad `READ_MEDIA_IMAGES` or legacy external storage access.
 - Data types:
   - Personal info: email, name, user ID.
   - Photos and videos: user-submitted report/profile images.
   - Location: approximate/precise address-derived location entered by user.
   - App activity: user-generated reports, likes, moderation actions.
+
+Google Play forms to complete:
+
+- Data Safety.
+- App Access: account demo `demo@civicvois.it` / `civicvois`.
+- Content Rating questionnaire.
+- Target audience and content.
+- UGC/moderation declaration if requested.
+- Photo/video permissions declaration should not be required unless broad media permissions are reintroduced.
 
 ## Apple App Privacy - bozza
 
@@ -116,5 +127,7 @@ Tracking:
 ## Verifiche manuali
 
 - Confermare titolare privacy e riferimenti legali.
-- Confermare che Google/Facebook login siano descritti solo se attivi nello store build.
+- Confermare che Apple/Google/Facebook login siano descritti solo se attivi nello store build.
+- Per Android, il pulsante Apple e' nascosto finche' `APPLE_SIGN_IN_ANDROID_ENABLED` resta `false`.
+- Per iOS, il pulsante Apple resta visibile e deve funzionare realmente prima di inviare ad Apple Review.
 - Confermare che non siano stati aggiunti SDK analytics/ads prima dell'invio.

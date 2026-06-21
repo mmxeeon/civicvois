@@ -4258,7 +4258,7 @@ html, body {
   .confirm-backdrop.is-open .confirm-sheet { transform: translateY(0) scale(1); }
 }
 
-/* ── Social auth (Google / Facebook) ──────────────────────────────────── */
+/* ── Social auth (Apple / Google / Facebook) ──────────────────────────── */
 .social-auth {
   display: flex;
   flex-direction: column;
@@ -4297,6 +4297,12 @@ html, body {
   color: var(--text);
 }
 .btn-social svg { flex-shrink: 0; }
+.btn-social-apple {
+  background: #050505;
+  color: #ffffff;
+  border-color: #050505;
+}
+.btn-social-apple:hover { background: #141414; }
 .btn-social-google {
   background: #ffffff;
   color: #1f1f1f;

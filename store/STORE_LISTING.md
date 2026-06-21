@@ -62,6 +62,11 @@ Nota da includere:
 
 > CivicVois e una piattaforma indipendente e non ufficiale. L'account demo consente di testare dashboard, creazione segnalazioni, profilo, moderazione contenuti disponibili all'utente e cancellazione account.
 
+Nota operativa:
+
+- Se Apple Review deve provare la cancellazione account, usare un account test sacrificabile diverso dall'account demo principale.
+- Se la build iOS include Google, verificare che anche Sign in with Apple sia configurato e funzionante prima dell'invio.
+
 ## URL richiesti
 
 - Privacy Policy: `https://civicvois.it/legal/privacy`

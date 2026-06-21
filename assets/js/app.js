@@ -1,4 +1,16 @@
-import { SUPABASE_URL, SUPABASE_ANON_KEY, FORCE_DEMO_MODE, IS_NATIVE_APP, GOOGLE_WEB_CLIENT_ID, FACEBOOK_APP_ID } from "./config.js";
+import {
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+  FORCE_DEMO_MODE,
+  IS_NATIVE_APP,
+  IS_IOS_NATIVE_APP,
+  IS_ANDROID_NATIVE_APP,
+  GOOGLE_WEB_CLIENT_ID,
+  APPLE_SIGN_IN_IOS_ENABLED,
+  APPLE_SIGN_IN_ANDROID_ENABLED,
+  APPLE_SIGN_IN_WEB_ENABLED,
+  FACEBOOK_APP_ID
+} from "./config.js";
 import { createSupabaseClient } from "./supabase-client.js";
 import { pageRoutes } from "./pages/index.js";
 
@@ -45,6 +57,11 @@ const NATIVE_OAUTH_REDIRECT = "it.civicvois.app://login-callback";
 const NATIVE_OAUTH_PENDING_KEY = "cv_native_oauth_pending";
 const NATIVE_OAUTH_SESSION_READY = "__civicvois_native_oauth_session_ready__";
 const NATIVE_OAUTH_PENDING_MAX_AGE_MS = 5 * 60 * 1000;
+const SOCIAL_PROVIDER_LABELS = {
+  apple: "Apple",
+  facebook: "Facebook",
+  google: "Google"
+};
 
 let nativeOAuthLifecycleInstalled = false;
 let nativeOAuthRecoveryRunning = false;
@@ -432,7 +449,7 @@ function createDemoAdapter() {
     },
 
     async startOAuth() {
-      throw new Error("Accesso Google non disponibile in modalità demo.");
+      throw new Error("Accesso social non disponibile in modalità demo.");
     },
 
     async logout() {
@@ -553,26 +570,32 @@ function createSupabaseAdapter() {
       let session = knownSession || state.session || readStoredSupabaseSession();
       if (!session) {
         const { data, error } = await supabase.auth.getSession();
-        if (error) throw new Error(niceBackendError(error, "Sessione Google non recuperata."));
+        if (error) throw new Error(niceBackendError(error, "Sessione social non recuperata."));
         session = data?.session || null;
       }
       const user = session?.user;
-      if (!user) throw new Error("Sessione Google non disponibile dopo il login.");
+      if (!user) throw new Error("Sessione social non disponibile dopo il login.");
       syncSessionState(session);
-      const profile = await withTimeout(this._ensureProfile(user, profileHint || {}), 12000, "profilo Google");
+      const profile = await withTimeout(this._ensureProfile(user, profileHint || {}), 12000, "profilo social");
       return { user, session, profile };
     },
 
     async startOAuth({ provider, redirectTo }) {
+      const options = {
+        redirectTo
+      };
+      if (provider === "google") {
+        options.queryParams = {
+          prompt: "select_account",
+          access_type: "offline"
+        };
+      }
+      if (provider === "apple") {
+        options.scopes = "name email";
+      }
       const { error } = await supabase.auth.signInWithOAuth({
         provider,
-        options: {
-          redirectTo,
-          queryParams: provider === "google" ? {
-            prompt: "select_account",
-            access_type: "offline"
-          } : undefined
-        }
+        options
       });
       if (error) throw new Error(niceBackendError(error, "Accesso social non riuscito."));
       return { redirecting: true };
@@ -917,12 +940,12 @@ function createSupabaseAdapter() {
 
       const payload = {
         username: fallbackUsername,
-        full_name: clean(extra.full_name || metadata.full_name || fallbackUsername),
+        full_name: clean(extra.full_name || metadata.full_name || metadata.name || fallbackUsername),
         regione: clean(extra.regione || metadata.regione || ""),
         provincia: clean(extra.provincia || metadata.provincia || ""),
         comune: clean(extra.comune || metadata.comune || ""),
         bio: clean(extra.bio || metadata.bio || ""),
-        avatar_url: clean(extra.avatar_url || metadata.avatar_url || "")
+        avatar_url: clean(extra.avatar_url || metadata.avatar_url || metadata.picture || "")
       };
 
       // Upsert via REST diretto col JWT (come saveProfile): supabase.from().upsert
@@ -1794,7 +1817,7 @@ function render() {
 
   // ── GUARD CENTRALE: profilo incompleto ──────────────────────────────────
   // Se l'utente è loggato ma mancano i dati minimi (es. comune dopo login
-  // Google), qualunque pagina privata lo dirotta alla schermata di
+  // social), qualunque pagina privata lo dirotta alla schermata di
   // completamento, finché non la compila. Niente home con profilo a metà.
   if (state.user && state.profile && isProfileIncomplete(state.profile) && state.route !== "complete-profile" && state.route !== "report") {
     state.route = "complete-profile";
@@ -2160,9 +2183,16 @@ function registerFormHtml() {
 }
 
 function socialAuthHtml() {
+  const appleButton = shouldShowAppleSignIn()
+    ? `<button class="btn btn-social btn-social-apple" type="button" data-social-provider="apple">
+        <svg width="18" height="22" viewBox="0 0 18 22" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="currentColor" d="M14.7 11.64c-.02-2.26 1.85-3.34 1.93-3.39-1.05-1.54-2.68-1.75-3.26-1.77-1.39-.14-2.71.82-3.41.82-.71 0-1.8-.8-2.96-.78-1.52.02-2.93.89-3.71 2.25-1.58 2.74-.4 6.8 1.14 9.02.75 1.09 1.65 2.32 2.83 2.27 1.13-.05 1.56-.73 2.93-.73 1.36 0 1.75.73 2.95.71 1.22-.02 1.99-1.11 2.74-2.21.87-1.27 1.23-2.5 1.25-2.56-.03-.01-2.39-.92-2.42-3.63zM12.46 5.01c.62-.75 1.04-1.8.93-2.84-.9.04-1.98.6-2.63 1.35-.58.67-1.09 1.74-.95 2.77 1 .08 2.02-.51 2.65-1.28z"/></svg>
+        <span>Continua con Apple</span>
+      </button>`
+    : "";
   return `
     <div class="social-auth">
       <div class="social-divider"><span>oppure continua con</span></div>
+      ${appleButton}
       <button class="btn btn-social btn-social-google" type="button" data-social-provider="google">
         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.91c1.7-1.57 2.69-3.88 2.69-6.61z" fill="#4285F4"/><path d="M9 18c2.43 0 4.46-.8 5.95-2.18l-2.91-2.26c-.8.54-1.83.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z" fill="#34A853"/><path d="M3.97 10.72A5.4 5.4 0 0 1 3.68 9c0-.6.1-1.18.29-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.05l3.01-2.33z" fill="#FBBC05"/><path d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.59C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z" fill="#EA4335"/></svg>
         <span>Continua con Google</span>
@@ -2176,8 +2206,34 @@ function socialAuthHtml() {
   `;
 }
 
+function shouldShowAppleSignIn() {
+  if (IS_IOS_NATIVE_APP) return APPLE_SIGN_IN_IOS_ENABLED;
+  if (IS_ANDROID_NATIVE_APP) return APPLE_SIGN_IN_ANDROID_ENABLED;
+  return APPLE_SIGN_IN_WEB_ENABLED;
+}
 
-// Social login (Google / Facebook): funziona sia su app nativa che su PWA web
+
+function providerLabel(provider) {
+  return SOCIAL_PROVIDER_LABELS[provider] || String(provider || "provider");
+}
+
+function niceSocialAuthMessage(provider, error) {
+  const label = providerLabel(provider);
+  const message = String(error?.message || error || "").trim();
+  const lower = message.toLowerCase();
+  if (provider === "apple" && (
+    lower.includes("provider") ||
+    lower.includes("not enabled") ||
+    lower.includes("disabled") ||
+    lower.includes("invalid_client") ||
+    lower.includes("oauth")
+  )) {
+    return "Accesso con Apple non ancora configurato. Abilita Sign in with Apple in Apple Developer e in Supabase Auth, poi riprova.";
+  }
+  return `Accesso con ${label} non riuscito.${message ? " " + message : ""}`;
+}
+
+// Social login (Apple / Google / Facebook): funziona sia su app nativa che su PWA web
 document.addEventListener("click", async (event) => {
   const btn = event.target.closest("[data-social-provider]");
   if (!btn) return;
@@ -2185,7 +2241,11 @@ document.addEventListener("click", async (event) => {
   const provider = btn.dataset.socialProvider;
   btn.disabled = true;
   try {
-    if (provider === "google") {
+    if (provider === "apple") {
+      if (!shouldShowAppleSignIn()) throw new Error("Accesso con Apple non abilitato su questa piattaforma.");
+      if (IS_NATIVE_APP) await handleAppleSignInNative();
+      else await handleAppleSignInWeb();
+    } else if (provider === "google") {
       if (IS_NATIVE_APP) await handleGoogleSignInNative();
       else await handleGoogleSignInWeb();
     } else if (provider === "facebook") {
@@ -2198,17 +2258,16 @@ document.addEventListener("click", async (event) => {
     if (msg.includes("cancel") || msg.includes("annullat") || msg.includes("closed")) {
       // utente ha chiuso il popup, niente toast
     } else {
-      toast("Accesso con " + provider + " non riuscito. " + (error?.message || ""), "error");
+      toast(niceSocialAuthMessage(provider, error), "error");
     }
   } finally {
     btn.disabled = false;
   }
 });
 
-// ── Google: app nativa Capacitor (Supabase OAuth + deep link) ─────────────
-// Niente plugin GoogleAuth nativo: riusiamo il login Google già configurato su
-// Supabase (lo stesso client Web che funziona sul sito). Apriamo la pagina di
-// consenso nel browser di sistema e intercettiamo il redirect sullo scheme
+// ── OAuth nativo Capacitor (Supabase + deep link) ─────────────────────────
+// Apple e Google passano da Supabase OAuth. Apriamo la pagina di consenso nel
+// browser di sistema e intercettiamo il redirect sullo scheme
 // it.civicvois.app:// tramite il plugin @capacitor/app, poi scambiamo il code
 // per una sessione (flusso PKCE). NB: il vecchio fallback rimandava a
 // capacitor://localhost/, che il browser di sistema non sa restituire all'app.
@@ -2252,6 +2311,11 @@ function hasRecentNativeOAuthPending() {
   return Boolean(pending?.startedAt && Date.now() - Number(pending.startedAt) <= NATIVE_OAUTH_PENDING_MAX_AGE_MS);
 }
 
+function currentNativeOAuthProvider() {
+  const pending = readLocal(NATIVE_OAUTH_PENDING_KEY, null);
+  return pending?.provider || "google";
+}
+
 function clearNativeOAuthPending() {
   try { localStorage.removeItem(NATIVE_OAUTH_PENDING_KEY); } catch {}
 }
@@ -2281,12 +2345,13 @@ function installNativeOAuthLifecycleHandlers() {
 
   const onUrl = (url, source) => {
     if (!isNativeOAuthCallbackUrl(url)) return;
-    rememberNativeOAuthPending("google");
-    completeNativeOAuthFromUrl(url, source).catch(error => {
+    const provider = currentNativeOAuthProvider();
+    rememberNativeOAuthPending(provider);
+    completeNativeOAuthFromUrl(url, source, provider).catch(error => {
       console.error("Redirect OAuth nativo non finalizzato", error);
       clearNativeOAuthPending();
       notifyNativeOAuthWaiter(null, error);
-      toast(niceBackendError(error, "Accesso Google non completato."), "error");
+      toast(niceBackendError(error, `Accesso ${providerLabel(provider)} non completato.`), "error");
     });
   };
 
@@ -2330,18 +2395,18 @@ function exchangeNativeOAuthCode(code) {
   return nativeOAuthExchangeByCode.get(code);
 }
 
-async function completeNativeOAuthCode(code, source = "appUrlOpen") {
-  if (!code) return recoverNativeOAuthSession(`${source}:no-code`, { allowWithoutPending: true });
+async function completeNativeOAuthCode(code, source = "appUrlOpen", provider = currentNativeOAuthProvider()) {
+  if (!code) return recoverNativeOAuthSession(`${source}:no-code`, { allowWithoutPending: true, provider });
   if (!nativeOAuthCompletionByCode.has(code)) {
     const completion = (async () => {
       const { data, error } = await exchangeNativeOAuthCode(code);
       if (error) {
-        const recovered = await recoverNativeOAuthSession(`${source}:exchange-fallback`, { allowWithoutPending: true });
+        const recovered = await recoverNativeOAuthSession(`${source}:exchange-fallback`, { allowWithoutPending: true, provider });
         if (recovered) return true;
-        throw new Error(error.message || "Scambio del codice Google non riuscito.");
+        throw new Error(error.message || `Scambio del codice ${providerLabel(provider)} non riuscito.`);
       }
       if (data?.session) syncSessionState(data.session);
-      await finalizeNativeOAuthSession({ session: data?.session || state.session, source });
+      await finalizeNativeOAuthSession({ session: data?.session || state.session, source, provider });
       return true;
     })();
     nativeOAuthCompletionByCode.set(code, completion);
@@ -2350,22 +2415,22 @@ async function completeNativeOAuthCode(code, source = "appUrlOpen") {
   return nativeOAuthCompletionByCode.get(code);
 }
 
-async function completeNativeOAuthFromUrl(url, source = "appUrlOpen") {
+async function completeNativeOAuthFromUrl(url, source = "appUrlOpen", provider = currentNativeOAuthProvider()) {
   const parsed = parseNativeOAuthCallbackUrl(url);
   if (!parsed) return false;
   if (parsed.error) throw new Error(parsed.error);
 
-  return completeNativeOAuthCode(parsed.code, source);
+  return completeNativeOAuthCode(parsed.code, source, provider);
 }
 
-async function finalizeNativeOAuthSession({ session = null, source = "native-oauth" } = {}) {
+async function finalizeNativeOAuthSession({ session = null, source = "native-oauth", provider = currentNativeOAuthProvider() } = {}) {
   if (!IS_NATIVE_APP || !supabase) return false;
   if (nativeOAuthFinalizeRunning) return false;
   nativeOAuthFinalizeRunning = true;
   try {
     let activeSession = session || state.session || readStoredSupabaseSession();
     if (!activeSession?.user) {
-      const { data, error } = await withTimeout(supabase.auth.getSession(), 6000, "sessione Google");
+      const { data, error } = await withTimeout(supabase.auth.getSession(), 6000, `sessione ${providerLabel(provider)}`);
       if (error) throw error;
       activeSession = data?.session || null;
     }
@@ -2385,12 +2450,12 @@ async function finalizeNativeOAuthSession({ session = null, source = "native-oau
       user: oauthUser,
       session: activeSession,
       profile: readCachedProfile(oauthUser.id)
-    }, "google");
+    }, provider);
 
     // Background: garantisci/aggiorna il profilo reale, poi ridisegna.
     backend.oauthFinalize({}, activeSession)
       .then(result => { if (result?.profile) { setProfileResolved(result.profile); render(); } })
-      .catch(error => { console.warn(`Profilo Google non finalizzato subito (${source}); ritento in background.`, error); try { ensureProfileLoaded(); } catch (_) {} });
+      .catch(error => { console.warn(`Profilo ${providerLabel(provider)} non finalizzato subito (${source}); ritento in background.`, error); try { ensureProfileLoaded(); } catch (_) {} });
 
     return true;
   } finally {
@@ -2402,6 +2467,7 @@ async function recoverNativeOAuthSession(source = "recovery", options = {}) {
   if (!IS_NATIVE_APP || !supabase) return false;
   if (!options.allowWithoutPending && !hasRecentNativeOAuthPending()) return false;
   if (nativeOAuthRecoveryRunning) return false;
+  const provider = options.provider || currentNativeOAuthProvider();
   nativeOAuthRecoveryRunning = true;
   try {
     const AppPlugin = window.Capacitor?.Plugins?.App;
@@ -2410,7 +2476,7 @@ async function recoverNativeOAuthSession(source = "recovery", options = {}) {
       if (isNativeOAuthCallbackUrl(launch?.url)) {
         const parsed = parseNativeOAuthCallbackUrl(launch.url);
         if (parsed?.code) {
-          return completeNativeOAuthCode(parsed.code, `${source}:launchUrl`);
+          return completeNativeOAuthCode(parsed.code, `${source}:launchUrl`, provider);
         }
       }
     }
@@ -2420,12 +2486,12 @@ async function recoverNativeOAuthSession(source = "recovery", options = {}) {
       if (delay) await wait(delay);
       const stored = state.session || readStoredSupabaseSession();
       if (stored?.user) {
-        await finalizeNativeOAuthSession({ session: stored, source });
+        await finalizeNativeOAuthSession({ session: stored, source, provider });
         return true;
       }
-      const { data } = await withTimeout(supabase.auth.getSession(), 5000, "sessione Google").catch(() => ({ data: null }));
+      const { data } = await withTimeout(supabase.auth.getSession(), 5000, `sessione ${providerLabel(provider)}`).catch(() => ({ data: null }));
       if (data?.session?.user) {
-        await finalizeNativeOAuthSession({ session: data.session, source });
+        await finalizeNativeOAuthSession({ session: data.session, source, provider });
         return true;
       }
     }
@@ -2436,33 +2502,47 @@ async function recoverNativeOAuthSession(source = "recovery", options = {}) {
 }
 
 async function handleGoogleSignInNative() {
+  await startNativeSupabaseOAuth("google");
+}
+
+async function handleAppleSignInNative() {
+  await startNativeSupabaseOAuth("apple");
+}
+
+async function startNativeSupabaseOAuth(provider) {
   if (!supabase) throw new Error("Backend non disponibile.");
   await assertSupabaseAuthReachable();
-  rememberNativeOAuthPending("google");
+  rememberNativeOAuthPending(provider);
+  const options = {
+    redirectTo: NATIVE_OAUTH_REDIRECT,
+    skipBrowserRedirect: true
+  };
+  if (provider === "google") {
+    options.queryParams = {
+      prompt: "select_account",
+      access_type: "offline"
+    };
+  }
+  if (provider === "apple") {
+    options.scopes = "name email";
+  }
   const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: NATIVE_OAUTH_REDIRECT,
-      skipBrowserRedirect: true,
-      queryParams: {
-        prompt: "select_account",
-        access_type: "offline"
-      }
-    }
+    provider,
+    options
   });
   if (error) {
     clearNativeOAuthPending();
-    throw new Error(error.message || "Avvio login Google non riuscito.");
+    throw new Error(error.message || `Avvio login ${providerLabel(provider)} non riuscito.`);
   }
   if (!data?.url) {
     clearNativeOAuthPending();
-    throw new Error("URL di autenticazione Google non disponibile.");
+    throw new Error(`URL di autenticazione ${providerLabel(provider)} non disponibile.`);
   }
 
   try {
-    await openNativeOAuthBrowserAndAwaitCompletion(data.url);
+    await openNativeOAuthBrowserAndAwaitCompletion(data.url, provider);
   } catch (waitError) {
-    const recovered = await recoverNativeOAuthSession("wait-fallback", { allowWithoutPending: true });
+    const recovered = await recoverNativeOAuthSession("wait-fallback", { allowWithoutPending: true, provider });
     if (recovered) return;
     clearNativeOAuthPending();
     throw waitError;
@@ -2472,7 +2552,7 @@ async function handleGoogleSignInNative() {
 // Apre l'URL OAuth e lascia che SOLO il listener globale `appUrlOpen` consumi il
 // deep link. Il bottone aspetta soltanto la finalizzazione, evitando doppi
 // exchange dello stesso code PKCE.
-function openNativeOAuthBrowserAndAwaitCompletion(authUrl) {
+function openNativeOAuthBrowserAndAwaitCompletion(authUrl, provider = currentNativeOAuthProvider()) {
   return new Promise((resolve, reject) => {
     const BrowserPlugin = window.Capacitor?.Plugins?.Browser;
     if (!window.Capacitor?.Plugins?.App?.addListener) {
@@ -2482,10 +2562,10 @@ function openNativeOAuthBrowserAndAwaitCompletion(authUrl) {
     let settled = false;
     let browserFinishedHandle = null;
     let cleanupDone = false;
-    const timer = setTimeout(() => finish(new Error("Tempo scaduto per il login Google.")), 180000);
+    const timer = setTimeout(() => finish(new Error(`Tempo scaduto per il login ${providerLabel(provider)}.`)), 180000);
     nativeOAuthWaiter = {
       resolve: (value) => finish(null, value),
-      reject: (error) => finish(error instanceof Error ? error : new Error(String(error || "Login Google non completato.")))
+      reject: (error) => finish(error instanceof Error ? error : new Error(String(error || `Login ${providerLabel(provider)} non completato.`)))
     };
     const waiter = nativeOAuthWaiter;
     function closeBrowser() {
@@ -2510,9 +2590,9 @@ function openNativeOAuthBrowserAndAwaitCompletion(authUrl) {
 
     if (BrowserPlugin?.addListener) {
       Promise.resolve(BrowserPlugin.addListener("browserFinished", async () => {
-        const recovered = await recoverNativeOAuthSession("browserFinished", { allowWithoutPending: true }).catch(() => false);
+        const recovered = await recoverNativeOAuthSession("browserFinished", { allowWithoutPending: true, provider }).catch(() => false);
         if (recovered) finish(null, NATIVE_OAUTH_SESSION_READY);
-        else finish(new Error("Login Google annullato."));
+        else finish(new Error(`Login ${providerLabel(provider)} annullato.`));
       })).then((h) => {
         if (cleanupDone) {
           try { h?.remove?.(); } catch (_) {}
@@ -2545,6 +2625,10 @@ function openNativeOAuthBrowserAndAwaitCompletion(authUrl) {
 async function handleGoogleSignInWeb() {
   if (!GOOGLE_WEB_CLIENT_ID) throw new Error("Google Client ID Web non configurato.");
   await startSupabaseOAuthRedirect("google");
+}
+
+async function handleAppleSignInWeb() {
+  await startSupabaseOAuthRedirect("apple");
 }
 
 async function startSupabaseOAuthRedirect(provider) {
